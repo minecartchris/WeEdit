@@ -49,8 +49,7 @@
     },
     "externalBin": [],
     "shortDescription": "Desktop video editor for Twitch VODs",
-    "longDescription": "WeEdit — a desktop video editor inspired by WeVideo, focused on editing Twitch VODs locally with native ffmpeg.",
-    "createUpdaterArtifacts": true
+    "longDescription": "WeEdit — a desktop video editor inspired by WeVideo, focused on editing Twitch VODs locally with native ffmpeg."
   },
   "plugins": {
     "updater": {

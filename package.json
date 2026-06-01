@@ -11,7 +11,8 @@
     "fetch-binaries": "node scripts/fetch-ffmpeg.mjs",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "npm run fetch-binaries && tauri build"
+    "tauri:build": "npm run fetch-binaries && tauri build",
+    "tauri:build:release": "npm run fetch-binaries && tauri build --config src-tauri/tauri.release.conf.json"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

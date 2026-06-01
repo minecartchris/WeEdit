@@ -73,6 +73,10 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
+          # tauri.release.conf.json overlays `createUpdaterArtifacts: true` so
+          # the updater latest.json + signature get generated. Local builds
+          # don't need keys; only CI signs.
+          args: "--config src-tauri/tauri.release.conf.json"
           tagName: ${{ github.ref_name }}
           releaseName: "WeEdit ${{ github.ref_name }}"
           releaseBody: |

@@ -1,0 +1,41 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body, #root {
+    height: 100%;
+  }
+  /* Don't put `select-none` on body — it can suppress HTML5 dragstart in some
+     WebView2 builds. We apply select-none on individual chrome surfaces (top
+     bar, sidebar, timeline header, etc.) instead. */
+  body {
+    @apply font-sans text-we-ink antialiased;
+  }
+}
+
+@layer components {
+  .we-btn {
+    @apply inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm
+           text-we-ink hover:bg-slate-100 transition-colors;
+  }
+  .we-btn-primary {
+    @apply inline-flex items-center gap-1.5 px-4 py-1.5 rounded-md text-sm
+           bg-we-teal text-white hover:bg-we-tealHover transition-colors;
+  }
+  .we-btn-ghost {
+    @apply inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-sm
+           text-we-muted hover:text-we-ink hover:bg-slate-100 transition-colors;
+  }
+  .we-input {
+    @apply w-full rounded border border-we-border px-3 py-2 text-sm
+           focus:outline-none focus:ring-2 focus:ring-we-teal/40 focus:border-we-teal
+           disabled:bg-slate-50 disabled:cursor-not-allowed;
+  }
+}
+
+/* Subtle scrollbar styling so panels feel native-app-ish, not browsery. */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 8px; }
+::-webkit-scrollbar-thumb:hover { background: #9ca3af; }

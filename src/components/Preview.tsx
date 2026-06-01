@@ -1,0 +1,103 @@
+import {
+  ChevronDown,
+  Maximize,
+  Pause,
+  Play,
+  SkipBack,
+  SkipForward,
+} from "lucide-react";
+import { PreviewStage } from "@/components/PreviewStage";
+import { Menu, MenuItem, MenuLabel } from "@/components/ui/Menu";
+import { useEditor } from "@/state/editor";
+import type { AspectRatio } from "@/types";
+
+const ASPECT_OPTIONS: AspectRatio[] = ["16:9", "9:16", "1:1", "4:3", "21:9"];
+
+// Center-right panel: video stage + transport. PreviewStage now renders the
+// active clip at the playhead; transport drives playhead via usePlayback.
+export function Preview() {
+  const isPlaying = useEditor((s) => s.isPlaying);
+  const togglePlay = useEditor((s) => s.togglePlay);
+  const aspect = useEditor((s) => s.project.aspectRatio);
+  const setAspect = useEditor((s) => s.setProjectAspect);
+  const setPlayhead = useEditor((s) => s.setPlayhead);
+
+  const stepFrame = (dir: 1 | -1) => {
+    const { playheadSec, project } = useEditor.getState();
+    setPlayhead(playheadSec + dir / project.fps);
+  };
+
+  return (
+    <section className="flex-1 min-w-0 flex flex-col bg-white">
+      <div className="flex-1 min-h-0 grid place-items-center bg-we-stage relative overflow-hidden">
+        <PreviewStage aspect={aspect} />
+      </div>
+
+      <PlayheadProgress />
+
+      <div className="h-12 shrink-0 flex items-center px-3 border-t border-we-border bg-white">
+        <Menu
+          dropUp
+          trigger={({ onClick }) => (
+            <button
+              onClick={onClick}
+              className="inline-flex items-center gap-1 px-2 py-1 rounded text-sm text-we-ink hover:bg-slate-100"
+              title="Aspect ratio"
+            >
+              <span className="inline-block w-4 h-3 rounded-sm border border-we-muted" />
+              {aspect}
+              <ChevronDown className="w-3.5 h-3.5" />
+            </button>
+          )}
+        >
+          <MenuLabel>Aspect ratio</MenuLabel>
+          {ASPECT_OPTIONS.map((opt) => (
+            <MenuItem key={opt} onSelect={() => setAspect(opt)}>
+              {opt}
+              {opt === aspect && <span className="text-we-teal text-xs">·</span>}
+            </MenuItem>
+          ))}
+        </Menu>
+
+        <div className="flex-1 flex items-center justify-center gap-2">
+          <button onClick={() => stepFrame(-1)} className="we-btn-ghost p-2" title="Previous frame">
+            <SkipBack className="w-5 h-5" />
+          </button>
+          <button
+            onClick={togglePlay}
+            className="we-btn-ghost p-2"
+            title={isPlaying ? "Pause (Space)" : "Play (Space)"}
+          >
+            {isPlaying ? <Pause className="w-6 h-6" /> : <Play className="w-6 h-6" />}
+          </button>
+          <button onClick={() => stepFrame(1)} className="we-btn-ghost p-2" title="Next frame">
+            <SkipForward className="w-5 h-5" />
+          </button>
+        </div>
+
+        <button className="we-btn-ghost p-2" title="Fullscreen">
+          <Maximize className="w-5 h-5" />
+        </button>
+      </div>
+    </section>
+  );
+}
+
+// Slim progress bar above the transport showing playhead vs total duration.
+function PlayheadProgress() {
+  const playheadSec = useEditor((s) => s.playheadSec);
+  const totalDur = useEditor((s) => {
+    let max = 0;
+    for (const c of Object.values(s.clips)) {
+      const end = c.startSec + c.durationSec;
+      if (end > max) max = end;
+    }
+    return max;
+  });
+  const pct = totalDur > 0 ? Math.min(100, (playheadSec / totalDur) * 100) : 0;
+  return (
+    <div className="h-1.5 bg-slate-100 relative">
+      <div className="absolute inset-y-0 left-0 bg-we-teal" style={{ width: `${pct}%` }} />
+    </div>
+  );
+}

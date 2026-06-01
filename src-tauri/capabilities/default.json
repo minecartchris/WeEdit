@@ -1,0 +1,15 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Default capability set for the WeEdit main window",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-close",
+    "dialog:default",
+    "fs:default",
+    "fs:allow-read-file",
+    "shell:default",
+    "shell:allow-open"
+  ]
+}

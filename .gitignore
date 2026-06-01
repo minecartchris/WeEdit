@@ -1,0 +1,45 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Build artifacts
+dist/
+dist-ssr/
+*.local
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+Thumbs.db
+
+# Node
+node_modules/
+
+# Tauri / Rust
+src-tauri/target/
+src-tauri/gen/
+src-tauri/Cargo.lock
+
+# ffmpeg sidecar binaries (downloaded by setup script, not committed)
+src-tauri/binaries/ffmpeg-*
+src-tauri/binaries/ffprobe-*
+
+# Local secrets / API credentials
+.env
+.env.local
+*.local.json
+
+# Generated TypeScript build info
+*.tsbuildinfo

@@ -1,0 +1,491 @@
+import { create } from "zustand";
+import type {
+  AspectRatio,
+  Clip,
+  LibraryFilter,
+  MediaItem,
+  ProjectMeta,
+  Track,
+  TrackKind,
+} from "@/types";
+
+// Phase 1.5 store: clip ops, drag sessions, and a small undo/redo history layer.
+//
+// History model: each user-visible mutation calls `withHistory()` which snapshots
+// {tracks, clips, media, project, selectedClipIds} into `past` and clears `future`.
+// Long-running interactions (drag/trim) call `pushHistory()` once at session start
+// and then mutate freely with `updateClip()` (which doesn't touch history).
+
+type Snapshot = Pick<EditorState, "tracks" | "clips" | "media" | "project" | "selectedClipIds">;
+
+const HISTORY_LIMIT = 100;
+
+function snapshot(s: EditorState): Snapshot {
+  return {
+    tracks: s.tracks,
+    clips: s.clips,
+    media: s.media,
+    project: s.project,
+    selectedClipIds: s.selectedClipIds,
+  };
+}
+
+function withHistory<T extends object>(
+  s: EditorState,
+  patch: T,
+): T & { past: Snapshot[]; future: Snapshot[] } {
+  return {
+    ...patch,
+    past: [...s.past.slice(-(HISTORY_LIMIT - 1)), snapshot(s)],
+    future: [],
+  };
+}
+
+interface EditorState {
+  project: ProjectMeta;
+  media: MediaItem[];
+  tracks: Track[];
+  clips: Record<string, Clip>;
+
+  /** Current playhead in seconds. */
+  playheadSec: number;
+  isPlaying: boolean;
+
+  /** Selected clip ids. */
+  selectedClipIds: string[];
+
+  /** Timeline horizontal zoom — pixels per second. */
+  pxPerSec: number;
+
+  /** Which sidebar bucket is selected — drives the library view. */
+  libraryFilter: LibraryFilter;
+
+  /** Active library-to-timeline drag session (set by media card, cleared on end/drop). */
+  dragSession: { mediaId: string; kind: MediaItem["kind"] } | null;
+
+  /** Track currently under the drag cursor — drives the lane hover highlight. */
+  hoverTrackId: string | null;
+
+  /** Path to the on-disk .weedit project folder (null until first save / open). */
+  projectPath: string | null;
+
+  /** Timestamp of last successful save (or load). null if never saved. */
+  lastSavedAt: number | null;
+
+  past: Snapshot[];
+  future: Snapshot[];
+
+  // ── Playhead / playback / zoom / selection (transient — no history)
+  setPlayhead: (sec: number) => void;
+  togglePlay: () => void;
+  setZoom: (pxPerSec: number) => void;
+  selectClip: (id: string | null, additive?: boolean) => void;
+  clearSelection: () => void;
+
+  // ── Library
+  setLibraryFilter: (key: LibraryFilter) => void;
+  addMedia: (item: MediaItem) => void;
+  removeMedia: (id: string) => void;
+  setMediaAudioTrackMuted: (mediaId: string, trackIndex: number, muted: boolean) => void;
+
+  // ── Project
+  setProjectAspect: (aspect: AspectRatio) => void;
+  setProjectName: (name: string) => void;
+
+  // ── Tracks
+  addTrack: (kind: TrackKind) => string;
+  removeTrack: (id: string) => void;
+  renameTrack: (id: string, name: string) => void;
+  setTrackVolume: (id: string, volume: number) => void;
+  setTrackMuted: (id: string, muted: boolean) => void;
+
+  // ── Clips
+  addClip: (clip: Clip) => void;
+  removeClip: (id: string) => void;
+  updateClip: (id: string, patch: Partial<Clip>) => void;
+  splitAtPlayhead: () => void;
+  deleteSelected: () => void;
+
+  // ── Drag session (library → timeline)
+  beginDragSession: (mediaId: string, kind: MediaItem["kind"]) => void;
+  endDragSession: () => void;
+  setHoverTrackId: (id: string | null) => void;
+
+  // ── Project persistence
+  setProjectPath: (path: string | null) => void;
+  setLastSavedAt: (t: number | null) => void;
+  applyLoadedProject: (
+    data: {
+      project: ProjectMeta;
+      media: MediaItem[];
+      tracks: Track[];
+      clips: Record<string, Clip>;
+    },
+    path: string,
+    savedAt: number,
+  ) => void;
+  resetProject: () => void;
+
+  // ── History
+  pushHistory: () => void;
+  undo: () => void;
+  redo: () => void;
+}
+
+const ASPECT_DIMENSIONS: Record<AspectRatio, { width: number; height: number }> = {
+  "16:9": { width: 1920, height: 1080 },
+  "9:16": { width: 1080, height: 1920 },
+  "1:1":  { width: 1080, height: 1080 },
+  "4:3":  { width: 1440, height: 1080 },
+  "21:9": { width: 2560, height: 1080 },
+};
+
+const defaultProject = (): ProjectMeta => ({
+  name: "My Project",
+  aspectRatio: "16:9",
+  fps: 30,
+  width: 1920,
+  height: 1080,
+  createdAt: Date.now(),
+  updatedAt: Date.now(),
+});
+
+const defaultTracks = (): Track[] => [
+  { id: "track-text-1",  kind: "text",  name: "Text 1",  volume: 1, muted: false, zIndex: 30, clipIds: [] },
+  { id: "track-video-1", kind: "video", name: "Video 1", volume: 1, muted: false, zIndex: 20, clipIds: [] },
+  { id: "track-audio-1", kind: "audio", name: "Audio 1", volume: 1, muted: false, zIndex: 10, clipIds: [] },
+];
+
+function nextTrackName(existing: Track[], kind: TrackKind): string {
+  const prefix = kind === "video" ? "Video" : kind === "audio" ? "Audio" : "Text";
+  const taken = new Set(existing.filter((t) => t.kind === kind).map((t) => t.name));
+  for (let i = 1; i < 999; i++) {
+    const candidate = `${prefix} ${i}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+  return `${prefix} ${existing.length + 1}`;
+}
+
+function nextZIndex(existing: Track[], kind: TrackKind): number {
+  const base = kind === "text" ? 30 : kind === "video" ? 20 : 10;
+  const peer = existing.filter((t) => t.kind === kind).map((t) => t.zIndex);
+  return peer.length ? Math.max(...peer) + 1 : base;
+}
+
+export const useEditor = create<EditorState>((set, get) => ({
+  project: defaultProject(),
+  media: [],
+  tracks: defaultTracks(),
+  clips: {},
+  playheadSec: 0,
+  isPlaying: false,
+  selectedClipIds: [],
+  pxPerSec: 8,
+  libraryFilter: "project-bin",
+  dragSession: null,
+  hoverTrackId: null,
+  projectPath: null,
+  lastSavedAt: null,
+  past: [],
+  future: [],
+
+  // Transient
+  setPlayhead: (sec) => set({ playheadSec: Math.max(0, sec) }),
+  togglePlay: () => set((s) => ({ isPlaying: !s.isPlaying })),
+  setZoom: (pxPerSec) => set({ pxPerSec: Math.max(0.5, Math.min(200, pxPerSec)) }),
+  selectClip: (id, additive = false) =>
+    set((s) => {
+      if (id == null) return { selectedClipIds: [] };
+      if (additive) {
+        return s.selectedClipIds.includes(id)
+          ? { selectedClipIds: s.selectedClipIds.filter((x) => x !== id) }
+          : { selectedClipIds: [...s.selectedClipIds, id] };
+      }
+      return { selectedClipIds: [id] };
+    }),
+  clearSelection: () => set({ selectedClipIds: [] }),
+
+  // Library
+  setLibraryFilter: (key) => set({ libraryFilter: key }),
+  addMedia: (item) => set((s) => withHistory(s, { media: [...s.media, item] })),
+  removeMedia: (id) =>
+    set((s) =>
+      withHistory(s, {
+        media: s.media.filter((m) => m.id !== id),
+      }),
+    ),
+  setMediaAudioTrackMuted: (mediaId, trackIndex, muted) =>
+    set((s) => ({
+      media: s.media.map((m) => {
+        if (m.id !== mediaId || !m.audioTracks) return m;
+        return {
+          ...m,
+          audioTracks: m.audioTracks.map((t) =>
+            t.index === trackIndex ? { ...t, muted } : t,
+          ),
+        };
+      }),
+    })),
+
+  // Project
+  setProjectAspect: (aspect) =>
+    set((s) =>
+      withHistory(s, {
+        project: {
+          ...s.project,
+          aspectRatio: aspect,
+          ...ASPECT_DIMENSIONS[aspect],
+          updatedAt: Date.now(),
+        },
+      }),
+    ),
+  setProjectName: (name) =>
+    set((s) =>
+      withHistory(s, {
+        project: { ...s.project, name, updatedAt: Date.now() },
+      }),
+    ),
+
+  // Tracks
+  addTrack: (kind) => {
+    const id = `track-${kind}-${crypto.randomUUID().slice(0, 8)}`;
+    set((s) =>
+      withHistory(s, {
+        tracks: [
+          ...s.tracks,
+          {
+            id,
+            kind,
+            name: nextTrackName(s.tracks, kind),
+            volume: 1,
+            muted: false,
+            zIndex: nextZIndex(s.tracks, kind),
+            clipIds: [],
+          },
+        ],
+      }),
+    );
+    return id;
+  },
+  removeTrack: (id) =>
+    set((s) => {
+      const track = s.tracks.find((t) => t.id === id);
+      if (!track) return s;
+      // Remove the track and any clips that lived on it.
+      const removedClipIds = new Set(track.clipIds);
+      const newClips = { ...s.clips };
+      for (const cid of removedClipIds) delete newClips[cid];
+      return withHistory(s, {
+        tracks: s.tracks.filter((t) => t.id !== id),
+        clips: newClips,
+        selectedClipIds: s.selectedClipIds.filter((cid) => !removedClipIds.has(cid)),
+      });
+    }),
+  renameTrack: (id, name) =>
+    set((s) =>
+      withHistory(s, {
+        tracks: s.tracks.map((t) => (t.id === id ? { ...t, name } : t)),
+      }),
+    ),
+  // Volume + mute mutate without history. Phase 2: capture history at slider
+  // mousedown so a single drag = one undo entry.
+  setTrackVolume: (id, volume) =>
+    set((s) => ({
+      tracks: s.tracks.map((t) =>
+        t.id === id ? { ...t, volume: Math.max(0, Math.min(1, volume)) } : t,
+      ),
+    })),
+  setTrackMuted: (id, muted) =>
+    set((s) => ({
+      tracks: s.tracks.map((t) => (t.id === id ? { ...t, muted } : t)),
+    })),
+
+  // Clips
+  addClip: (clip) =>
+    set((s) =>
+      withHistory(s, {
+        clips: { ...s.clips, [clip.id]: clip },
+        tracks: s.tracks.map((t) =>
+          t.id === clip.trackId ? { ...t, clipIds: [...t.clipIds, clip.id] } : t,
+        ),
+        selectedClipIds: [clip.id],
+      }),
+    ),
+  removeClip: (id) =>
+    set((s) => {
+      const clip = s.clips[id];
+      if (!clip) return s;
+      const newClips = { ...s.clips };
+      delete newClips[id];
+      return withHistory(s, {
+        clips: newClips,
+        tracks: s.tracks.map((t) =>
+          t.id === clip.trackId
+            ? { ...t, clipIds: t.clipIds.filter((cid) => cid !== id) }
+            : t,
+        ),
+        selectedClipIds: s.selectedClipIds.filter((cid) => cid !== id),
+      });
+    }),
+  // No history — used for live drag/trim/slider updates.
+  updateClip: (id, patch) =>
+    set((s) => {
+      const existing = s.clips[id];
+      if (!existing) return s;
+      return { clips: { ...s.clips, [id]: { ...existing, ...patch } as Clip } };
+    }),
+  splitAtPlayhead: () =>
+    set((s) => {
+      const t = s.playheadSec;
+      const targetIds =
+        s.selectedClipIds.length > 0
+          ? s.selectedClipIds
+          : Object.values(s.clips)
+              .filter((c) => c.startSec < t && t < c.startSec + c.durationSec)
+              .map((c) => c.id);
+      if (targetIds.length === 0) return s;
+
+      const newClips: Record<string, Clip> = { ...s.clips };
+      const trackAdditions: Record<string, string[]> = {};
+      const newSelection: string[] = [];
+
+      for (const id of targetIds) {
+        const clip = newClips[id];
+        if (!clip) continue;
+        const offset = t - clip.startSec;
+        if (offset <= 0 || offset >= clip.durationSec) continue;
+
+        const left = { ...clip, durationSec: offset };
+        const rightId = crypto.randomUUID();
+        const right = {
+          ...clip,
+          id: rightId,
+          startSec: t,
+          durationSec: clip.durationSec - offset,
+          sourceInSec: clip.sourceInSec + offset,
+        };
+        newClips[id] = left as Clip;
+        newClips[rightId] = right as Clip;
+        (trackAdditions[clip.trackId] ??= []).push(rightId);
+        newSelection.push(id, rightId);
+      }
+      if (newSelection.length === 0) return s;
+
+      return withHistory(s, {
+        clips: newClips,
+        tracks: s.tracks.map((tr) =>
+          trackAdditions[tr.id]
+            ? { ...tr, clipIds: [...tr.clipIds, ...trackAdditions[tr.id]] }
+            : tr,
+        ),
+        selectedClipIds: newSelection,
+      });
+    }),
+  deleteSelected: () =>
+    set((s) => {
+      const ids = s.selectedClipIds;
+      if (ids.length === 0) return s;
+      const removed = new Set(ids);
+      const newClips = { ...s.clips };
+      for (const id of ids) delete newClips[id];
+      return withHistory(s, {
+        clips: newClips,
+        tracks: s.tracks.map((t) => ({
+          ...t,
+          clipIds: t.clipIds.filter((cid) => !removed.has(cid)),
+        })),
+        selectedClipIds: [],
+      });
+    }),
+
+  // Drag session
+  beginDragSession: (mediaId, kind) => set({ dragSession: { mediaId, kind } }),
+  endDragSession: () => set({ dragSession: null, hoverTrackId: null }),
+  setHoverTrackId: (id) => set({ hoverTrackId: id }),
+
+  // Project persistence
+  setProjectPath: (path) => set({ projectPath: path }),
+  setLastSavedAt: (t) => set({ lastSavedAt: t }),
+  applyLoadedProject: (data, path, savedAt) =>
+    set({
+      project: data.project,
+      media: data.media,
+      tracks: data.tracks,
+      clips: data.clips,
+      projectPath: path,
+      lastSavedAt: savedAt,
+      selectedClipIds: [],
+      playheadSec: 0,
+      isPlaying: false,
+      past: [],
+      future: [],
+    }),
+  resetProject: () =>
+    set({
+      project: defaultProject(),
+      media: [],
+      tracks: defaultTracks(),
+      clips: {},
+      projectPath: null,
+      lastSavedAt: null,
+      selectedClipIds: [],
+      playheadSec: 0,
+      isPlaying: false,
+      past: [],
+      future: [],
+    }),
+
+  // History
+  pushHistory: () =>
+    set((s) => ({
+      past: [...s.past.slice(-(HISTORY_LIMIT - 1)), snapshot(s)],
+      future: [],
+    })),
+  undo: () => {
+    const s = get();
+    if (s.past.length === 0) return;
+    const previous = s.past[s.past.length - 1];
+    set({
+      ...previous,
+      past: s.past.slice(0, -1),
+      future: [snapshot(s), ...s.future.slice(0, HISTORY_LIMIT - 1)],
+    });
+  },
+  redo: () => {
+    const s = get();
+    if (s.future.length === 0) return;
+    const next = s.future[0];
+    set({
+      ...next,
+      past: [...s.past.slice(-(HISTORY_LIMIT - 1)), snapshot(s)],
+      future: s.future.slice(1),
+    });
+  },
+}));
+
+// ── Helpers used by UI ──────────────────────────────────────────────────────
+//
+// NOTE: don't write Zustand selectors that return freshly-built arrays/objects
+// (e.g. `s.selectedClipIds.map(id => s.clips[id])`) — useSyncExternalStore
+// requires snapshot stability. Either compose with `useMemo` in the component
+// against raw state slices, or read a single stable value (one clip, a boolean,
+// a length) directly inside the selector.
+
+export function formatTimecode(totalSec: number, fps = 30): string {
+  if (!Number.isFinite(totalSec) || totalSec < 0) totalSec = 0;
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = Math.floor(totalSec % 60);
+  const f = Math.floor((totalSec - Math.floor(totalSec)) * fps);
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  return `${pad(h)}:${pad(m)}:${pad(s)}:${pad(f)}`;
+}
+
+export function formatDuration(totalSec: number | undefined): string {
+  if (totalSec == null || !Number.isFinite(totalSec)) return "—";
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = Math.floor(totalSec % 60);
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}

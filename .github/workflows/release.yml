@@ -1,0 +1,83 @@
+# Build + publish a signed WeEdit release on every `v*` tag.
+#
+# What this does on `git push --tags`:
+# 1. Spins up windows-latest
+# 2. Installs Node + Rust + npm deps
+# 3. Downloads ffmpeg-essentials into src-tauri/binaries (so the installer
+#    bundles it — end users don't need ffmpeg installed)
+# 4. Runs tauri-action which: cargo-builds the app, packages MSI + NSIS,
+#    signs the updater artifacts with TAURI_SIGNING_PRIVATE_KEY, and uploads
+#    everything (MSI, EXE, latest.json) to a GitHub Release matching the tag.
+#
+# Prereqs (one-time setup; see docs in the chat where this was added):
+#   1. `npm run tauri signer generate -- --write-keys ~/.tauri/weedit.key`
+#      → produces ~/.tauri/weedit.key (PRIVATE) and ~/.tauri/weedit.key.pub
+#   2. Paste the public key into src-tauri/tauri.conf.json `plugins.updater.pubkey`
+#   3. In GitHub repo Settings → Secrets → Actions, add:
+#        TAURI_SIGNING_PRIVATE_KEY         = (contents of ~/.tauri/weedit.key)
+#        TAURI_SIGNING_PRIVATE_KEY_PASSWORD = (the password you set, or empty)
+#   4. Replace the REPLACE_WITH_YOUR_* placeholders in tauri.conf.json with
+#      your actual repo URL
+#
+# Releasing:
+#   - bump version in package.json + src-tauri/tauri.conf.json + src-tauri/Cargo.toml
+#   - git commit -am "release: vX.Y.Z"
+#   - git tag vX.Y.Z
+#   - git push origin main --tags
+# GitHub Actions does the rest; ~10 min later end-users get the update via
+# Check for updates… in the hamburger menu (or the silent on-startup check).
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('src-tauri/Cargo.lock', 'src-tauri/Cargo.toml') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-
+
+      - name: Install npm deps
+        run: npm ci
+
+      - name: Fetch bundled ffmpeg
+        run: npm run fetch-binaries
+
+      - name: Build + sign + publish
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "WeEdit ${{ github.ref_name }}"
+          releaseBody: |
+            Download the `.msi` or setup `.exe` below to install.
+            Existing users get the update via **Check for updates** in the hamburger menu.
+          releaseDraft: false
+          prerelease: false
+          includeUpdaterJson: true

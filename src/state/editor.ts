@@ -150,8 +150,10 @@ const defaultProject = (): ProjectMeta => ({
   updatedAt: Date.now(),
 });
 
+// Text 1 is intentionally NOT in the defaults — it confused beta testers ("why
+// is there a text track if I don't use text?"). `TextPanel` auto-creates one
+// the first time the user clicks a text preset.
 const defaultTracks = (): Track[] => [
-  { id: "track-text-1",  kind: "text",  name: "Text 1",  volume: 1, muted: false, zIndex: 30, clipIds: [] },
   { id: "track-video-1", kind: "video", name: "Video 1", volume: 1, muted: false, zIndex: 20, clipIds: [] },
   { id: "track-audio-1", kind: "audio", name: "Audio 1", volume: 1, muted: false, zIndex: 10, clipIds: [] },
 ];
@@ -192,7 +194,7 @@ export const useEditor = create<EditorState>((set, get) => ({
   // Transient
   setPlayhead: (sec) => set({ playheadSec: Math.max(0, sec) }),
   togglePlay: () => set((s) => ({ isPlaying: !s.isPlaying })),
-  setZoom: (pxPerSec) => set({ pxPerSec: Math.max(0.5, Math.min(200, pxPerSec)) }),
+  setZoom: (pxPerSec) => set({ pxPerSec: Math.max(0.05, Math.min(200, pxPerSec)) }),
   selectClip: (id, additive = false) =>
     set((s) => {
       if (id == null) return { selectedClipIds: [] };

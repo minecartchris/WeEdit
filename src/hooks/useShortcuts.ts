@@ -40,6 +40,26 @@ export function useShortcuts() {
       } else if ((e.key === "s" || e.key === "S") && !ctrl) {
         e.preventDefault();
         splitAtPlayhead();
+      } else if (e.key === "Home") {
+        e.preventDefault();
+        useEditor.getState().setPlayhead(0);
+      } else if (e.key === "End") {
+        e.preventDefault();
+        const { clips } = useEditor.getState();
+        let max = 0;
+        for (const c of Object.values(clips)) {
+          const end = c.startSec + c.durationSec;
+          if (end > max) max = end;
+        }
+        useEditor.getState().setPlayhead(max);
+      } else if (e.key === "ArrowLeft" && !ctrl) {
+        e.preventDefault();
+        const { playheadSec, project } = useEditor.getState();
+        useEditor.getState().setPlayhead(playheadSec - 1 / project.fps);
+      } else if (e.key === "ArrowRight" && !ctrl) {
+        e.preventDefault();
+        const { playheadSec, project } = useEditor.getState();
+        useEditor.getState().setPlayhead(playheadSec + 1 / project.fps);
       }
     };
     window.addEventListener("keydown", onKey);

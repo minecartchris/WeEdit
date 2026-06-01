@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { useEditor } from "@/state/editor";
+import { useIntegrations } from "@/state/integrations";
 import type { Clip, MediaItem, ProjectMeta, Track } from "@/types";
 
 // On-disk project format. The folder layout is:
@@ -99,6 +100,7 @@ export async function saveProject(): Promise<void> {
   await writeProjectToFolder(path, file);
   useEditor.getState().setProjectPath(path);
   useEditor.getState().setLastSavedAt(file.savedAt);
+  await useIntegrations.getState().pushRecentProject(path);
 }
 
 export async function saveProjectAs(): Promise<void> {
@@ -108,11 +110,17 @@ export async function saveProjectAs(): Promise<void> {
   await writeProjectToFolder(path, file);
   useEditor.getState().setProjectPath(path);
   useEditor.getState().setLastSavedAt(file.savedAt);
+  await useIntegrations.getState().pushRecentProject(path);
 }
 
 export async function openProject(): Promise<void> {
   const path = await pickOpenLocation();
   if (!path) return;
+  await openProjectFromPath(path);
+}
+
+/** Open a known project path without going through the OS picker. */
+export async function openProjectFromPath(path: string): Promise<void> {
   const data = await readProjectFromFolder(path);
   useEditor.getState().applyLoadedProject(
     {
@@ -124,8 +132,15 @@ export async function openProject(): Promise<void> {
     path,
     data.savedAt,
   );
+  await useIntegrations.getState().pushRecentProject(path);
 }
 
 export function newProject(): void {
   useEditor.getState().resetProject();
+}
+
+/** Strip a `.weedit` folder path down to a friendly display name. */
+export function projectDisplayName(path: string): string {
+  const last = path.split(/[\\/]/).filter(Boolean).pop() || path;
+  return last.replace(/\.weedit$/i, "");
 }

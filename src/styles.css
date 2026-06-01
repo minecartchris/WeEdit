@@ -5,6 +5,10 @@
 @layer base {
   html, body, #root {
     height: 100%;
+    /* Belt-and-suspenders: if any internal element ever overflows horizontally
+       (e.g. timeline zoom) it must NOT create a document-level scrollbar that
+       shifts the whole app. The timeline panel has its own overflow-x-auto. */
+    overflow: hidden;
   }
   /* Don't put `select-none` on body — it can suppress HTML5 dragstart in some
      WebView2 builds. We apply select-none on individual chrome surfaces (top

@@ -1,8 +1,12 @@
-import { Music } from "lucide-react";
-import { useCallback } from "react";
+import { MoreHorizontal, Music, Pencil, Scissors, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ContextMenu, ContextMenuItem } from "@/components/ui/ContextMenu";
 import {
   MIN_CLIP_DURATION,
+  TEXT_CHAR_LIMIT,
+  clampClipStart,
   clipEdgeAnchors,
+  clipNoOverlapWindow,
   snapToAnchors,
 } from "@/lib/clips";
 import { useEditor } from "@/state/editor";
@@ -14,15 +18,22 @@ interface ClipBlockProps {
 }
 
 // One clip block on a timeline track. Handles selection click, body drag for
-// repositioning, and edge handles for trimming.
+// repositioning, edge handles for trimming, double-click to edit text, and
+// right-click for the per-clip context menu (delete / split / properties).
 export function ClipBlock({ clip, pxPerSec }: ClipBlockProps) {
   const isSelected = useEditor((s) => s.selectedClipIds.includes(clip.id));
   const selectClip = useEditor((s) => s.selectClip);
   const updateClip = useEditor((s) => s.updateClip);
   const pushHistory = useEditor((s) => s.pushHistory);
+  const removeClip = useEditor((s) => s.removeClip);
+  const splitAtPlayhead = useEditor((s) => s.splitAtPlayhead);
+  const setPlayhead = useEditor((s) => s.setPlayhead);
   const media = useEditor((s) => s.media);
   const allClips = useEditor((s) => s.clips);
   const playheadSec = useEditor((s) => s.playheadSec);
+
+  const [editingText, setEditingText] = useState(false);
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
 
   const sourceMedia: MediaItem | undefined =
     clip.kind !== "text"
@@ -36,6 +47,7 @@ export function ClipBlock({ clip, pxPerSec }: ClipBlockProps) {
 
   // ── Body drag (move along time axis) ──
   const onBodyMouseDown = (e: React.MouseEvent) => {
+    if (editingText) return;
     if (e.button !== 0) return;
     e.stopPropagation();
     selectClip(clip.id, e.shiftKey);
@@ -44,12 +56,22 @@ export function ClipBlock({ clip, pxPerSec }: ClipBlockProps) {
     const startX = e.clientX;
     const initialStart = clip.startSec;
     const anchors = collectAnchors();
+    const liveClips = useEditor.getState().clips;
 
     const onMove = (ev: MouseEvent) => {
       const dPx = ev.clientX - startX;
       const dSec = dPx / pxPerSec;
       let nextStart = Math.max(0, initialStart + dSec);
       if (!ev.shiftKey) nextStart = snapToAnchors(nextStart, anchors, pxPerSec);
+      // No-overlap clamp against same-track neighbours.
+      nextStart = clampClipStart(
+        clip.id,
+        clip.trackId,
+        clip.durationSec,
+        initialStart,
+        nextStart,
+        liveClips,
+      );
       updateClip(clip.id, { startSec: nextStart });
     };
     const onUp = () => {
@@ -62,6 +84,7 @@ export function ClipBlock({ clip, pxPerSec }: ClipBlockProps) {
 
   // ── Edge trim ──
   const onTrimMouseDown = (edge: "left" | "right") => (e: React.MouseEvent) => {
+    if (editingText) return;
     if (e.button !== 0) return;
     e.stopPropagation();
     selectClip(clip.id);
@@ -76,12 +99,25 @@ export function ClipBlock({ clip, pxPerSec }: ClipBlockProps) {
     const sourceDur =
       sourceMedia?.durationSec != null ? sourceMedia.durationSec : Infinity;
     const anchors = collectAnchors();
+    const window = clipNoOverlapWindow(
+      clip.id,
+      clip.trackId,
+      initial.durationSec,
+      initial.startSec,
+      useEditor.getState().clips,
+    );
 
     const onMove = (ev: MouseEvent) => {
       const dSec = (ev.clientX - startX) / pxPerSec;
       if (edge === "left") {
-        // Shift left edge by `dragged` seconds. Negative = extend leftward.
-        const minDragged = Math.max(-initial.sourceInSec, -initial.startSec);
+        // Left edge: clamp by source start (sourceInSec >= 0), MIN_DUR, t>=0,
+        // AND no-overlap window's lower bound.
+        const lowerByOverlap = window.min - initial.startSec;
+        const minDragged = Math.max(
+          -initial.sourceInSec,
+          -initial.startSec,
+          lowerByOverlap,
+        );
         const maxDragged = initial.durationSec - MIN_CLIP_DURATION;
         let dragged = Math.max(minDragged, Math.min(maxDragged, dSec));
 
@@ -98,8 +134,13 @@ export function ClipBlock({ clip, pxPerSec }: ClipBlockProps) {
           durationSec: initial.durationSec - dragged,
         });
       } else {
-        // Right edge: change durationSec; cap by source remaining.
-        const maxDur = Math.max(MIN_CLIP_DURATION, sourceDur - initial.sourceInSec);
+        // Right edge: extend duration up to source remaining AND up to the
+        // next neighbour's start.
+        const sourceMaxDur = Math.max(MIN_CLIP_DURATION, sourceDur - initial.sourceInSec);
+        const overlapMaxDur = window.max === Infinity
+          ? Infinity
+          : Math.max(MIN_CLIP_DURATION, window.max - initial.startSec + initial.durationSec);
+        const maxDur = Math.min(sourceMaxDur, overlapMaxDur);
         let nextDur = Math.max(MIN_CLIP_DURATION, Math.min(maxDur, initial.durationSec + dSec));
         if (!ev.shiftKey) {
           const candidateEnd = initial.startSec + nextDur;
@@ -115,6 +156,29 @@ export function ClipBlock({ clip, pxPerSec }: ClipBlockProps) {
     };
     document.addEventListener("mousemove", onMove);
     document.addEventListener("mouseup", onUp);
+  };
+
+  // ── Double-click to edit text clip ──
+  const onDoubleClick = (e: React.MouseEvent) => {
+    if (clip.kind !== "text") return;
+    e.stopPropagation();
+    selectClip(clip.id);
+    setEditingText(true);
+  };
+
+  const commitText = (next: string) => {
+    const trimmed = next.slice(0, TEXT_CHAR_LIMIT);
+    pushHistory();
+    updateClip(clip.id, { text: trimmed });
+    setEditingText(false);
+  };
+
+  // ── Right-click context menu ──
+  const onContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    selectClip(clip.id);
+    setCtxMenu({ x: e.clientX, y: e.clientY });
   };
 
   const left = clip.startSec * pxPerSec;
@@ -134,9 +198,10 @@ export function ClipBlock({ clip, pxPerSec }: ClipBlockProps) {
       style={{ left, width }}
       onMouseDown={onBodyMouseDown}
       onClick={(e) => e.stopPropagation()}
+      onDoubleClick={onDoubleClick}
+      onContextMenu={onContextMenu}
       title={renderClipTitle(clip, sourceMedia)}
     >
-      {/* Left trim handle */}
       <div
         onMouseDown={onTrimMouseDown("left")}
         className="w-1.5 shrink-0 bg-we-teal/60 hover:bg-we-teal cursor-ew-resize"
@@ -144,14 +209,108 @@ export function ClipBlock({ clip, pxPerSec }: ClipBlockProps) {
 
       <div className="flex-1 min-w-0 relative cursor-grab active:cursor-grabbing">
         <ClipBackground clip={clip} sourceMedia={sourceMedia} width={width} />
-        <ClipLabel clip={clip} sourceMedia={sourceMedia} />
+        {editingText && clip.kind === "text" ? (
+          <InlineTextEditor
+            initialValue={(clip as TextClip).text}
+            onCommit={commitText}
+            onCancel={() => setEditingText(false)}
+          />
+        ) : (
+          <ClipLabel clip={clip} sourceMedia={sourceMedia} />
+        )}
       </div>
 
-      {/* Right trim handle */}
       <div
         onMouseDown={onTrimMouseDown("right")}
         className="w-1.5 shrink-0 bg-we-teal/60 hover:bg-we-teal cursor-ew-resize"
       />
+
+      {ctxMenu && (
+        <ContextMenu x={ctxMenu.x} y={ctxMenu.y} onClose={() => setCtxMenu(null)}>
+          {clip.kind === "text" && (
+            <ContextMenuItem icon={Pencil} onSelect={() => setEditingText(true)}>
+              Edit text
+            </ContextMenuItem>
+          )}
+          <ContextMenuItem
+            icon={Scissors}
+            onSelect={() => {
+              // Move playhead inside the clip if it isn't already, then split.
+              if (playheadSec <= clip.startSec || playheadSec >= clip.startSec + clip.durationSec) {
+                setPlayhead(clip.startSec + clip.durationSec / 2);
+              }
+              splitAtPlayhead();
+            }}
+            shortcut="S"
+          >
+            Split at playhead
+          </ContextMenuItem>
+          <ContextMenuItem icon={MoreHorizontal} onSelect={() => selectClip(clip.id)} disabled>
+            Properties (toolbar)
+          </ContextMenuItem>
+          <ContextMenuItem icon={Trash2} danger onSelect={() => removeClip(clip.id)} shortcut="Del">
+            Delete clip
+          </ContextMenuItem>
+        </ContextMenu>
+      )}
+    </div>
+  );
+}
+
+// ── Inline text editor ──
+
+function InlineTextEditor({
+  initialValue,
+  onCommit,
+  onCancel,
+}: {
+  initialValue: string;
+  onCommit: (value: string) => void;
+  onCancel: () => void;
+}) {
+  const [value, setValue] = useState(initialValue);
+  const ref = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.focus();
+    el.select();
+  }, []);
+
+  const remaining = TEXT_CHAR_LIMIT - value.length;
+
+  return (
+    <div className="absolute inset-0 flex items-stretch">
+      <textarea
+        ref={ref}
+        value={value}
+        maxLength={TEXT_CHAR_LIMIT}
+        onChange={(e) => setValue(e.target.value)}
+        onClick={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
+        onDoubleClick={(e) => e.stopPropagation()}
+        onBlur={() => onCommit(value)}
+        onKeyDown={(e) => {
+          e.stopPropagation(); // don't let parent (timeline) catch Delete / S / Space
+          if (e.key === "Escape") {
+            e.preventDefault();
+            onCancel();
+          } else if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            onCommit(value);
+          }
+        }}
+        className="flex-1 px-1.5 py-0.5 bg-amber-50/95 text-amber-900 text-xs outline-none resize-none border-2 border-amber-400 rounded-sm"
+      />
+      <span
+        className={[
+          "absolute bottom-0.5 right-1 text-[9px] font-mono tabular-nums pointer-events-none",
+          remaining <= 20 ? "text-red-600" : "text-amber-700/70",
+        ].join(" ")}
+      >
+        {remaining}
+      </span>
     </div>
   );
 }
@@ -213,7 +372,6 @@ function ClipLabel({
 }
 
 function AudioBars({ width }: { width: number }) {
-  // Cheap deterministic "waveform" so audio clips look distinct.
   const barCount = Math.max(8, Math.floor(width / 4));
   const heights: number[] = [];
   let seed = 1337;

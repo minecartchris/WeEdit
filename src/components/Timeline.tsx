@@ -1,10 +1,8 @@
 import {
   ChevronDown,
-  Filter,
-  MessageSquare,
+  Maximize2,
   MoreVertical,
   Music,
-  Pencil,
   Plus,
   Redo2,
   Scissors,
@@ -17,10 +15,10 @@ import {
   Volume2,
   VolumeX,
 } from "lucide-react";
-import { useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { ClipBlock } from "@/components/ClipBlock";
 import { Menu, MenuItem, MenuLabel, MenuSeparator } from "@/components/ui/Menu";
-import { isMediaCompatibleWithTrack } from "@/lib/clips";
+import { TEXT_CHAR_LIMIT, isMediaCompatibleWithTrack } from "@/lib/clips";
 import { formatTimecode, useEditor } from "@/state/editor";
 import type { Clip, MediaClip, TextClip, Track, TrackKind } from "@/types";
 
@@ -71,28 +69,69 @@ export function Timeline() {
     document.addEventListener("mouseup", onUp);
   };
 
+  // Total scroll width = track-header column + content width at current zoom +
+  // a little headroom so the rightmost clip handle doesn't sit against the edge.
+  const TRACK_HEADER_PX = 160;
+  const SCROLL_INNER_WIDTH = TRACK_HEADER_PX + totalSec * pxPerSec + 24;
+
+  // "Fit" computes a zoom level that makes the timeline content fit in the
+  // visible scroll-container width. Useful after importing a long VOD where
+  // the default px/sec is way too granular.
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const fitToWindow = useCallback(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const available = el.clientWidth - TRACK_HEADER_PX - 24;
+    if (available <= 0 || totalSec <= 0) return;
+    setZoom(available / totalSec);
+  }, [totalSec, setZoom]);
+
+  // Auto-fit on first import if the existing zoom would leave content
+  // running far off-screen. Only fires once per project load.
+  const hasAutoFit = useRef(false);
+  useEffect(() => {
+    if (hasAutoFit.current) return;
+    if (totalSec <= 60) return; // default 60s window is fine
+    const el = scrollContainerRef.current;
+    if (!el || el.clientWidth <= 0) return;
+    const wouldOverflowBy = (totalSec * pxPerSec) / (el.clientWidth - TRACK_HEADER_PX - 24);
+    if (wouldOverflowBy > 2.5) {
+      fitToWindow();
+      hasAutoFit.current = true;
+    }
+  }, [totalSec, pxPerSec, fitToWindow]);
+
   return (
-    <section className="shrink-0 flex flex-col bg-white border-t border-we-border">
+    <section className="shrink-0 flex flex-col bg-white border-t border-we-border min-w-0">
       <TimelineToolbar
         timecode={`${totalDisplay} / ${totalLength}`}
         pxPerSec={pxPerSec}
         onZoom={setZoom}
         onAddTrack={addTrack}
+        onFit={fitToWindow}
       />
-      <div className="flex">
-        <div className="w-40 shrink-0 border-r border-we-border bg-we-trackHead" />
-        <div ref={rulerRef} onMouseDown={onRulerMouseDown} className="flex-1 cursor-ew-resize">
-          <Ruler totalSec={totalSec} pxPerSec={pxPerSec} playheadSec={playheadSec} />
+      {/* The single horizontal scroller for the timeline. Track headers stick
+          to the left of this scroller via `position: sticky` so they stay
+          visible during scroll. Without this overflow-x-auto the zoomed lanes
+          would push the entire app horizontally. */}
+      <div ref={scrollContainerRef} className="overflow-x-auto overflow-y-hidden">
+        <div className="relative" style={{ width: SCROLL_INNER_WIDTH }}>
+          {/* Ruler row */}
+          <div className="flex">
+            <div className="w-40 shrink-0 sticky left-0 z-30 border-r border-b border-we-border bg-we-trackHead h-7" />
+            <div ref={rulerRef} onMouseDown={onRulerMouseDown} className="flex-1 cursor-ew-resize">
+              <Ruler totalSec={totalSec} pxPerSec={pxPerSec} playheadSec={playheadSec} />
+            </div>
+          </div>
+          {/* Track rows */}
+          <div onClick={(e) => { if (e.target === e.currentTarget) clearSelection(); }}>
+            {tracks.map((t) => (
+              <TrackRow key={t.id} track={t} totalSec={totalSec} pxPerSec={pxPerSec} />
+            ))}
+            <PlayheadOverlay playheadSec={playheadSec} pxPerSec={pxPerSec} />
+            <TimelineDropHint visible={tracks.every((t) => t.clipIds.length === 0)} />
+          </div>
         </div>
-      </div>
-      <div className="relative" onClick={(e) => {
-        if (e.target === e.currentTarget) clearSelection();
-      }}>
-        {tracks.map((t) => (
-          <TrackRow key={t.id} track={t} totalSec={totalSec} pxPerSec={pxPerSec} />
-        ))}
-        <PlayheadOverlay playheadSec={playheadSec} pxPerSec={pxPerSec} />
-        <TimelineDropHint visible={tracks.every((t) => t.clipIds.length === 0)} />
       </div>
     </section>
   );
@@ -103,11 +142,13 @@ function TimelineToolbar({
   pxPerSec,
   onZoom,
   onAddTrack,
+  onFit,
 }: {
   timecode: string;
   pxPerSec: number;
   onZoom: (n: number) => void;
   onAddTrack: (kind: TrackKind) => void;
+  onFit: () => void;
 }) {
   const undo = useEditor((s) => s.undo);
   const redo = useEditor((s) => s.redo);
@@ -163,20 +204,12 @@ function TimelineToolbar({
         shortcut="S"
         onClick={splitAtPlayhead}
       />
-      <ToolbarButton
-        icon={MessageSquare}
-        accent
-        label="Comment"
-        disabled
-      />
 
       <AudioOpacityMenu />
       <TextPropertiesMenu />
 
       <Sep />
 
-      <ToolbarButton icon={Pencil} accent label="Edit" disabled />
-      <ToolbarButton icon={Filter} accent label="Filters" disabled />
       <ToolbarButton
         icon={Trash2}
         label="Delete"
@@ -190,12 +223,16 @@ function TimelineToolbar({
       <span className="font-mono text-sm text-we-ink tabular-nums">{timecode}</span>
 
       <div className="flex items-center gap-2 ml-3">
+        <button onClick={onFit} className="we-btn-ghost" title="Fit timeline to window">
+          <Maximize2 className="w-4 h-4 text-we-muted" />
+          Fit
+        </button>
         <Search className="w-4 h-4 text-we-muted" />
         <input
           type="range"
-          min={0.5}
+          min={0.1}
           max={50}
-          step={0.5}
+          step={0.1}
           value={pxPerSec}
           onChange={(e) => onZoom(parseFloat(e.target.value))}
           className="accent-we-teal w-32"
@@ -428,11 +465,22 @@ function TextPropertiesMenu() {
           <MenuLabel>Text properties</MenuLabel>
 
           <label className="flex flex-col gap-1 text-xs text-we-ink">
-            <span>Content</span>
+            <div className="flex items-center justify-between">
+              <span>Content</span>
+              <span
+                className={[
+                  "text-[10px] tabular-nums",
+                  TEXT_CHAR_LIMIT - target.text.length <= 20 ? "text-red-600" : "text-we-muted",
+                ].join(" ")}
+              >
+                {target.text.length} / {TEXT_CHAR_LIMIT}
+              </span>
+            </div>
             <textarea
               value={target.text}
+              maxLength={TEXT_CHAR_LIMIT}
               onFocus={pushHistory}
-              onChange={(e) => updateClip(target.id, { text: e.target.value })}
+              onChange={(e) => updateClip(target.id, { text: e.target.value.slice(0, TEXT_CHAR_LIMIT) })}
               rows={2}
               className="we-input resize-none"
             />
@@ -631,7 +679,9 @@ function TrackRow({
 
   return (
     <div className="flex border-b border-we-border min-h-[64px]">
-      <TrackHeader track={track} />
+      <div className="sticky left-0 z-20 bg-we-trackHead">
+        <TrackHeader track={track} />
+      </div>
       <div
         className={[
           "relative flex-1 transition-colors",
@@ -675,7 +725,7 @@ function TrackHeader({ track }: { track: Track }) {
 
   const audible = track.kind !== "text";
   return (
-    <div className="w-40 shrink-0 px-3 py-2 border-r border-we-border bg-we-trackHead flex flex-col justify-between">
+    <div className="w-40 shrink-0 px-3 py-2 border-r border-we-border bg-we-trackHead flex flex-col justify-between gap-1.5">
       <div className="flex items-center justify-between">
         <span className="text-sm font-medium text-we-ink truncate" title={track.name}>{track.name}</span>
         <Menu
@@ -694,31 +744,31 @@ function TrackHeader({ track }: { track: Track }) {
           <MenuItem danger icon={Trash2} onSelect={onDelete}>Delete track</MenuItem>
         </Menu>
       </div>
-      <div className={["flex items-center gap-2", audible ? "" : "opacity-60"].join(" ")}>
-        <button
-          onClick={() => audible && setMuted(track.id, !track.muted)}
-          disabled={!audible}
-          className="we-btn-ghost p-0.5"
-          title={track.muted ? "Unmute" : "Mute"}
-        >
-          {track.muted ? (
-            <VolumeX className="w-4 h-4 text-we-muted" />
-          ) : (
-            <Volume2 className="w-4 h-4 text-we-muted" />
-          )}
-        </button>
-        <input
-          type="range"
-          min={0}
-          max={1}
-          step={0.01}
-          value={track.volume}
-          disabled={!audible}
-          onChange={(e) => setVolume(track.id, parseFloat(e.target.value))}
-          className="accent-we-teal flex-1"
-          aria-label={`${track.name} volume`}
-        />
-      </div>
+      {audible && (
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setMuted(track.id, !track.muted)}
+            className="we-btn-ghost p-0.5"
+            title={track.muted ? "Unmute" : "Mute"}
+          >
+            {track.muted ? (
+              <VolumeX className="w-4 h-4 text-we-muted" />
+            ) : (
+              <Volume2 className="w-4 h-4 text-we-muted" />
+            )}
+          </button>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.01}
+            value={track.volume}
+            onChange={(e) => setVolume(track.id, parseFloat(e.target.value))}
+            className="accent-we-teal flex-1"
+            aria-label={`${track.name} volume`}
+          />
+        </div>
+      )}
     </div>
   );
 }

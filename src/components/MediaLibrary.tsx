@@ -82,7 +82,21 @@ export function MediaLibrary() {
     };
   }, [importMany]);
 
-  const visible = useMemo(() => filterMedia(media, tab), [media, tab]);
+  const clipsMap = useEditor((s) => s.clips);
+  const usedMediaIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const c of Object.values(clipsMap)) {
+      if (c.kind === "text") continue;
+      ids.add((c as { mediaId: string }).mediaId);
+    }
+    return ids;
+  }, [clipsMap]);
+
+  const visible = useMemo(() => {
+    let items = filterMedia(media, tab);
+    if (hideUsed) items = items.filter((m) => !usedMediaIds.has(m.id));
+    return items;
+  }, [media, tab, hideUsed, usedMediaIds]);
 
   const handleAddMedia = async (
     source: "device" | "record" | "url" | "twitch" | "nas",

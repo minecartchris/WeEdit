@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { save as saveDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { open as shellOpen } from "@tauri-apps/plugin-shell";
 import { documentDir, join } from "@tauri-apps/api/path";
 import {
@@ -10,9 +10,10 @@ import {
   FolderOpen,
   Loader2,
   Play,
+  RefreshCw,
   Zap,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Modal } from "@/components/ui/Modal";
 import {
   EXPORT_PRESETS,
@@ -20,8 +21,10 @@ import {
   type ExportPreset,
   type VideoCodec,
 } from "@/lib/exportFfmpeg";
+import { checkFfmpeg, type FfmpegCheck } from "@/lib/ffmpeg";
 import { useEditor } from "@/state/editor";
 import { useExports } from "@/state/exports";
+import { useIntegrations } from "@/state/integrations";
 
 interface Props {
   open: boolean;
@@ -39,6 +42,28 @@ export function ExportModal({ open, onClose }: Props) {
   const startExport = useExports((s) => s.start);
   const cancelExport = useExports((s) => s.cancel);
   const dismissExport = useExports((s) => s.dismiss);
+  const ffmpegPath = useIntegrations((s) => s.ffmpegPath);
+  const setFfmpegPath = useIntegrations((s) => s.setFfmpegPath);
+
+  const [ffmpegStatus, setFfmpegStatus] = useState<FfmpegCheck | null>(null);
+  const recheckFfmpeg = useCallback(async () => {
+    setFfmpegStatus(await checkFfmpeg());
+  }, []);
+  useEffect(() => {
+    if (!open) return;
+    void recheckFfmpeg();
+  }, [open, ffmpegPath, recheckFfmpeg]);
+
+  const locateFfmpeg = async () => {
+    const picked = await openDialog({
+      title: "Locate ffmpeg.exe",
+      filters: [{ name: "Executable", extensions: ["exe"] }],
+      multiple: false,
+    });
+    if (!picked) return;
+    const path = Array.isArray(picked) ? picked[0] : picked;
+    if (path) await setFfmpegPath(path);
+  };
 
   const aspectDefault = useMemo(() => defaultPresetForAspect(aspect), [aspect]);
 
@@ -135,6 +160,14 @@ export function ExportModal({ open, onClose }: Props) {
             <span>Your timeline is empty. Drop a clip onto a track before exporting.</span>
           </div>
         )}
+
+        <FfmpegBanner
+          check={ffmpegStatus}
+          customPathSet={!!ffmpegPath}
+          onRecheck={recheckFfmpeg}
+          onLocate={locateFfmpeg}
+          onClearPath={() => setFfmpegPath(null)}
+        />
 
         <Section title="Quality">
           <div className="grid grid-cols-2 gap-2">
@@ -281,6 +314,55 @@ export function ExportModal({ open, onClose }: Props) {
         </div>
       </div>
     </Modal>
+  );
+}
+
+function FfmpegBanner({
+  check,
+  customPathSet,
+  onRecheck,
+  onLocate,
+  onClearPath,
+}: {
+  check: FfmpegCheck | null;
+  customPathSet: boolean;
+  onRecheck: () => void | Promise<void>;
+  onLocate: () => void | Promise<void>;
+  onClearPath: () => void | Promise<void>;
+}) {
+  if (!check) return null;
+  if (check.found) {
+    return (
+      <div className="rounded border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[11px] text-emerald-700 flex items-center gap-2">
+        <Check className="w-3.5 h-3.5" />
+        <span className="flex-1 truncate" title={check.version}>
+          ffmpeg ready · {check.version}
+        </span>
+        {customPathSet && (
+          <button onClick={() => void onClearPath()} className="we-btn-ghost px-1.5 py-0.5 text-[11px]">
+            Clear custom path
+          </button>
+        )}
+        <button onClick={() => void onRecheck()} className="we-btn-ghost px-1.5 py-0.5" title="Recheck">
+          <RefreshCw className="w-3 h-3" />
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 flex items-start gap-2">
+      <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+      <div className="flex-1 leading-5">
+        <strong>ffmpeg isn't accessible.</strong>{" "}
+        {check.error || "Install it via `winget install ffmpeg` and restart WeEdit, or point WeEdit at ffmpeg.exe directly."}
+      </div>
+      <button onClick={() => void onRecheck()} className="we-btn text-[11px]" title="Re-check">
+        <RefreshCw className="w-3 h-3" /> Recheck
+      </button>
+      <button onClick={() => void onLocate()} className="we-btn text-[11px]" title="Pick ffmpeg.exe">
+        <FolderOpen className="w-3 h-3" /> Locate…
+      </button>
+    </div>
   );
 }
 

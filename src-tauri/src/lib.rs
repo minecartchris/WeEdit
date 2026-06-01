@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::thread;
 use std::time::Duration;
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 // Cooperative-cancel flags for in-flight ffmpeg exports keyed by exportId.
 // The exporting task polls its flag inside the wait-loop; `ffmpeg_cancel`
@@ -22,6 +22,12 @@ use tauri::Emitter;
 // take ownership of the same Child.
 static FFMPEG_CANCEL_FLAGS: LazyLock<Mutex<HashMap<String, Arc<AtomicBool>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+
+// Path to the bundled-ffmpeg directory, set once in setup() from
+// `app.path().resource_dir()`. Populated only in production builds where the
+// installer copies binaries/* into the resources dir.
+static BUNDLED_FFMPEG_DIR: LazyLock<Mutex<Option<PathBuf>>> =
+    LazyLock::new(|| Mutex::new(None));
 
 /// Helper that runs a closure on Tauri's blocking thread pool and unwraps the
 /// JoinHandle so commands stay tidy. Subprocess spawning + child.wait() are
@@ -172,10 +178,45 @@ fn smb_authenticate_blocking(
 
 // ── ffmpeg / ffprobe (used by the importer for multi-track audio extraction) ──
 
-/// Resolves an ffmpeg-family binary (ffmpeg or ffprobe). Looks at PATH first,
-/// then common Windows install locations. Returns the resolved path string or
-/// None if the binary isn't found.
-fn find_ffmpeg_binary(name: &str) -> Option<String> {
+/// Resolves an ffmpeg-family binary (ffmpeg or ffprobe). Tries (in order):
+/// 1. A user-configured custom path — if it points at the requested binary,
+///    use it; otherwise check the same directory for the requested binary
+///    (so picking ffmpeg.exe also locates ffprobe.exe next to it).
+/// 2. PATH
+/// 3. Known winget install locations on Windows
+fn find_ffmpeg_binary(name: &str, custom: Option<&str>) -> Option<String> {
+    // 1. User-configured custom path wins so an end user can override the
+    // bundled binary if they want a newer build.
+    if let Some(p) = custom {
+        let trimmed = p.trim();
+        if !trimmed.is_empty() {
+            let pp = Path::new(trimmed);
+            let matches_name = pp
+                .file_stem()
+                .map(|s| s.to_string_lossy().eq_ignore_ascii_case(name))
+                .unwrap_or(false);
+            if matches_name && pp.is_file() {
+                return Some(trimmed.to_string());
+            }
+            if let Some(parent) = pp.parent() {
+                let candidate = parent.join(format!("{name}.exe"));
+                if candidate.is_file() {
+                    return Some(candidate.to_string_lossy().to_string());
+                }
+            }
+        }
+    }
+
+    // 2. Bundled binary (shipped with the installer via bundle.resources).
+    if let Ok(guard) = BUNDLED_FFMPEG_DIR.lock() {
+        if let Some(dir) = guard.as_ref() {
+            let candidate = dir.join(format!("{name}.exe"));
+            if candidate.is_file() {
+                return Some(candidate.to_string_lossy().to_string());
+            }
+        }
+    }
+
     if Command::new(name).arg("-version").output().is_ok() {
         return Some(name.to_string());
     }
@@ -191,13 +232,11 @@ fn find_ffmpeg_binary(name: &str) -> Option<String> {
                 return Some(c.clone());
             }
         }
-        // Glob winget packages
         let packages = PathBuf::from(format!("{local_appdata}\\Microsoft\\WinGet\\Packages"));
         if let Ok(entries) = fs::read_dir(&packages) {
             for entry in entries.flatten() {
                 let dir_name = entry.file_name().to_string_lossy().to_lowercase();
                 if dir_name.contains("ffmpeg") {
-                    // Look for the binary anywhere under this package dir.
                     if let Some(found) = find_in_dir(&entry.path(), &format!("{name}.exe")) {
                         return Some(found);
                     }
@@ -206,6 +245,31 @@ fn find_ffmpeg_binary(name: &str) -> Option<String> {
         }
     }
     None
+}
+
+const FFMPEG_INSTALL_HINT: &str = "ffmpeg not found. Install via `winget install ffmpeg` and restart WeEdit, or use the Locate button to point WeEdit at ffmpeg.exe.";
+
+#[tauri::command]
+async fn ffmpeg_check(custom_path: Option<String>) -> Result<String, String> {
+    run_blocking("ffmpeg_check", move || {
+        let bin = find_ffmpeg_binary("ffmpeg", custom_path.as_deref())
+            .ok_or_else(|| FFMPEG_INSTALL_HINT.to_string())?;
+        let output = Command::new(&bin)
+            .arg("-version")
+            .output()
+            .map_err(|e| format!("Found ffmpeg at {bin} but couldn't run it: {e}"))?;
+        if !output.status.success() {
+            return Err(format!("ffmpeg at {bin} returned non-zero exit"));
+        }
+        // ffmpeg -version's first line is "ffmpeg version <ver> ...".
+        let first = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .next()
+            .unwrap_or("")
+            .to_string();
+        Ok(format!("{first} ({bin})"))
+    })
+    .await
 }
 
 fn find_in_dir(dir: &Path, target_name: &str) -> Option<String> {
@@ -246,13 +310,22 @@ struct ProbeResult {
 /// Empty list = "ffprobe not available" (the caller can fall back to the
 /// HTML5-element probe path and assume single mixed audio).
 #[tauri::command]
-async fn ffprobe_audio_streams(path: String) -> Result<ProbeResult, String> {
-    run_blocking("ffprobe_audio_streams", move || ffprobe_audio_streams_blocking(path)).await
+async fn ffprobe_audio_streams(
+    path: String,
+    custom_path: Option<String>,
+) -> Result<ProbeResult, String> {
+    run_blocking("ffprobe_audio_streams", move || {
+        ffprobe_audio_streams_blocking(path, custom_path)
+    })
+    .await
 }
 
-fn ffprobe_audio_streams_blocking(path: String) -> Result<ProbeResult, String> {
-    let bin = find_ffmpeg_binary("ffprobe")
-        .ok_or_else(|| "ffprobe not found. Install ffmpeg via `winget install ffmpeg` and restart WeEdit.".to_string())?;
+fn ffprobe_audio_streams_blocking(
+    path: String,
+    custom_path: Option<String>,
+) -> Result<ProbeResult, String> {
+    let bin = find_ffmpeg_binary("ffprobe", custom_path.as_deref())
+        .ok_or_else(|| FFMPEG_INSTALL_HINT.to_string())?;
 
     let output = Command::new(&bin)
         .args([
@@ -341,9 +414,10 @@ async fn ffmpeg_extract_audio_tracks(
     source_path: String,
     output_dir: String,
     track_count: usize,
+    custom_path: Option<String>,
 ) -> Result<Vec<ExtractedTrack>, String> {
     run_blocking("ffmpeg_extract_audio_tracks", move || {
-        ffmpeg_extract_audio_tracks_blocking(source_path, output_dir, track_count)
+        ffmpeg_extract_audio_tracks_blocking(source_path, output_dir, track_count, custom_path)
     })
     .await
 }
@@ -352,9 +426,10 @@ fn ffmpeg_extract_audio_tracks_blocking(
     source_path: String,
     output_dir: String,
     track_count: usize,
+    custom_path: Option<String>,
 ) -> Result<Vec<ExtractedTrack>, String> {
-    let bin = find_ffmpeg_binary("ffmpeg")
-        .ok_or_else(|| "ffmpeg not found. Install via `winget install ffmpeg` and restart WeEdit.".to_string())?;
+    let bin = find_ffmpeg_binary("ffmpeg", custom_path.as_deref())
+        .ok_or_else(|| FFMPEG_INSTALL_HINT.to_string())?;
 
     fs::create_dir_all(&output_dir).map_err(|e| format!("mkdir failed: {e}"))?;
 
@@ -416,9 +491,10 @@ async fn ffmpeg_run(
     args: Vec<String>,
     export_id: String,
     total_duration_sec: f32,
+    custom_path: Option<String>,
 ) -> Result<(), String> {
     run_blocking("ffmpeg_run", move || {
-        ffmpeg_run_blocking(app, args, export_id, total_duration_sec)
+        ffmpeg_run_blocking(app, args, export_id, total_duration_sec, custom_path)
     })
     .await
 }
@@ -428,9 +504,10 @@ fn ffmpeg_run_blocking(
     args: Vec<String>,
     export_id: String,
     total_duration_sec: f32,
+    custom_path: Option<String>,
 ) -> Result<(), String> {
-    let bin = find_ffmpeg_binary("ffmpeg")
-        .ok_or_else(|| "ffmpeg not found. Install via `winget install ffmpeg` and restart WeEdit.".to_string())?;
+    let bin = find_ffmpeg_binary("ffmpeg", custom_path.as_deref())
+        .ok_or_else(|| FFMPEG_INSTALL_HINT.to_string())?;
 
     // Append progress reporting.
     let mut full_args = args.clone();
@@ -1070,6 +1147,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .invoke_handler(tauri::generate_handler![
             read_project_file,
             write_project_file,
@@ -1083,10 +1162,24 @@ pub fn run() {
             http_download,
             ffprobe_audio_streams,
             ffmpeg_extract_audio_tracks,
+            ffmpeg_check,
             ffmpeg_run,
             ffmpeg_cancel,
         ])
         .setup(|app| {
+            // Locate bundled ffmpeg / ffprobe (shipped via bundle.resources).
+            // On a packaged build, resource_dir() points at the installer's
+            // resources dir; on dev it points at src-tauri so the same files
+            // work locally if you've run `npm run fetch-binaries`.
+            if let Ok(resource_dir) = app.path().resource_dir() {
+                let bundled = resource_dir.join("binaries");
+                if bundled.is_dir() {
+                    if let Ok(mut guard) = BUNDLED_FFMPEG_DIR.lock() {
+                        *guard = Some(bundled);
+                    }
+                }
+            }
+
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()

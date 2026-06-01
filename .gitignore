@@ -32,7 +32,9 @@ src-tauri/target/
 src-tauri/gen/
 src-tauri/Cargo.lock
 
-# ffmpeg sidecar binaries (downloaded by setup script, not committed)
+# Bundled binaries (downloaded by scripts/fetch-ffmpeg.mjs, not committed —
+# each build host fetches its own copy).
+src-tauri/binaries/*.exe
 src-tauri/binaries/ffmpeg-*
 src-tauri/binaries/ffprobe-*
 

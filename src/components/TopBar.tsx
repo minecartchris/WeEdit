@@ -15,14 +15,18 @@ import {
 import { useEffect, useState } from "react";
 import { ExportModal } from "@/components/ExportModal";
 import { GpuBadge } from "@/components/GpuBadge";
+import { UpdaterDialog } from "@/components/UpdaterDialog";
 import { Menu, MenuItem, MenuLabel, MenuSeparator } from "@/components/ui/Menu";
 import {
   newProject,
   openProject,
+  openProjectFromPath,
+  projectDisplayName,
   saveProject,
   saveProjectAs,
 } from "@/lib/project";
 import { useEditor } from "@/state/editor";
+import { useIntegrations } from "@/state/integrations";
 
 // Top chrome bar. Logo + project title on the left, status & actions on the right.
 export function TopBar() {
@@ -30,8 +34,36 @@ export function TopBar() {
   const setProjectName = useEditor((s) => s.setProjectName);
   const lastSavedAt = useEditor((s) => s.lastSavedAt);
   const projectPath = useEditor((s) => s.projectPath);
+  const clipCount = useEditor((s) => Object.keys(s.clips).length);
   const undo = useEditor((s) => s.undo);
+  const recentProjects = useIntegrations((s) => s.recentProjects);
+  const clearRecentProjects = useIntegrations((s) => s.clearRecentProjects);
   const [exportOpen, setExportOpen] = useState(false);
+  const [updaterOpen, setUpdaterOpen] = useState(false);
+  // Silent updater check ~5s after launch — pops the dialog if an update is
+  // available, stays quiet otherwise.
+  const [autoUpdaterOpen, setAutoUpdaterOpen] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setAutoUpdaterOpen(true), 5000);
+    return () => clearTimeout(t);
+  }, []);
+
+  const confirmNewProject = () => {
+    if (clipCount === 0) {
+      newProject();
+      return;
+    }
+    if (window.confirm("Start a new project? Anything not saved will be discarded.")) {
+      newProject();
+    }
+  };
+
+  const openRecent = (path: string) => {
+    void openProjectFromPath(path).catch((err) => {
+      console.error("Failed to open recent project:", err);
+      window.alert(`Couldn't open ${path}\n\n${err instanceof Error ? err.message : String(err)}`);
+    });
+  };
 
   const onClose = async () => {
     try {
@@ -77,16 +109,29 @@ export function TopBar() {
         )}
       >
         <MenuLabel>Project</MenuLabel>
-        <MenuItem icon={FilePlus}   onSelect={swallow(newProject)}     shortcut="Ctrl+N">New project</MenuItem>
+        <MenuItem icon={FilePlus}   onSelect={confirmNewProject}       shortcut="Ctrl+N">New project</MenuItem>
         <MenuItem icon={FolderOpen} onSelect={swallow(openProject)}    shortcut="Ctrl+O">Open project…</MenuItem>
-        <MenuItem icon={Save}       onSelect={swallow(saveProject)}    shortcut="Ctrl+S">Save</MenuItem>
-        <MenuItem icon={FileDown}   onSelect={swallow(saveProjectAs)}>Save as…</MenuItem>
+        <MenuItem icon={Save}       onSelect={swallow(saveProject)}    shortcut="Ctrl+S">Save project</MenuItem>
+        <MenuItem icon={FileDown}   onSelect={swallow(saveProjectAs)}>Save project as…</MenuItem>
+        {recentProjects.length > 0 && (
+          <>
+            <MenuSeparator />
+            <MenuLabel>Recent projects</MenuLabel>
+            {recentProjects.slice(0, 8).map((p) => (
+              <MenuItem key={p} onSelect={() => openRecent(p)}>
+                {projectDisplayName(p)}
+              </MenuItem>
+            ))}
+            <MenuItem onSelect={() => void clearRecentProjects()}>Clear recents</MenuItem>
+          </>
+        )}
         <MenuSeparator />
         <MenuLabel>Edit</MenuLabel>
         <MenuItem icon={Undo2}     onSelect={undo}              shortcut="Ctrl+Z">Undo</MenuItem>
         <MenuItem onSelect={onRenameProject}>Rename project…</MenuItem>
         <MenuSeparator />
         <MenuItem icon={Keyboard}  shortcut="?">Keyboard shortcuts</MenuItem>
+        <MenuItem onSelect={() => setUpdaterOpen(true)}>Check for updates…</MenuItem>
       </Menu>
 
       <button
@@ -165,6 +210,8 @@ export function TopBar() {
       <button className="we-btn-primary" onClick={() => setExportOpen(true)}>Export</button>
 
       <ExportModal open={exportOpen} onClose={() => setExportOpen(false)} />
+      <UpdaterDialog open={updaterOpen} onClose={() => setUpdaterOpen(false)} />
+      <UpdaterDialog open={autoUpdaterOpen} onClose={() => setAutoUpdaterOpen(false)} silentIfUpToDate />
     </header>
   );
 }

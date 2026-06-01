@@ -13,12 +13,16 @@ export interface AppConfig {
   nasConnections?: NasConnection[];
   /** Absolute path to yt-dlp.exe if the user picked one manually. */
   ytdlpPath?: string;
+  /** Absolute path to ffmpeg.exe if the user picked one manually. */
+  ffmpegPath?: string;
   /** Pexels API key for stock photo / video search. */
   pexelsApiKey?: string;
   /** Freesound API key for SFX + sound effect search. */
   freesoundApiKey?: string;
   /** Jamendo client ID for music track search. */
   jamendoApiKey?: string;
+  /** Most-recently-opened .weedit project folders, newest first, max 10. */
+  recentProjects?: string[];
 }
 
 export interface TwitchConfig {

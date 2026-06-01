@@ -1,5 +1,7 @@
 import {
   ChevronDown,
+  ChevronsLeft,
+  ChevronsRight,
   Maximize,
   Pause,
   Play,
@@ -22,9 +24,24 @@ export function Preview() {
   const setAspect = useEditor((s) => s.setProjectAspect);
   const setPlayhead = useEditor((s) => s.setPlayhead);
 
-  const stepFrame = (dir: 1 | -1) => {
-    const { playheadSec, project } = useEditor.getState();
-    setPlayhead(playheadSec + dir / project.fps);
+  // SkipBack/SkipForward used to step a single frame, which was too tiny to
+  // be useful. Now jump 5 seconds; arrow keys still step one frame for fine
+  // alignment.
+  const SKIP_SEC = 5;
+  const skip = (dir: 1 | -1) => {
+    const { playheadSec } = useEditor.getState();
+    setPlayhead(Math.max(0, playheadSec + dir * SKIP_SEC));
+  };
+
+  const jumpToStart = () => setPlayhead(0);
+  const jumpToEnd = () => {
+    const { clips } = useEditor.getState();
+    let max = 0;
+    for (const c of Object.values(clips)) {
+      const end = c.startSec + c.durationSec;
+      if (end > max) max = end;
+    }
+    setPlayhead(max);
   };
 
   return (
@@ -59,8 +76,11 @@ export function Preview() {
           ))}
         </Menu>
 
-        <div className="flex-1 flex items-center justify-center gap-2">
-          <button onClick={() => stepFrame(-1)} className="we-btn-ghost p-2" title="Previous frame">
+        <div className="flex-1 flex items-center justify-center gap-1">
+          <button onClick={jumpToStart} className="we-btn-ghost p-2" title="Jump to start (Home)">
+            <ChevronsLeft className="w-5 h-5" />
+          </button>
+          <button onClick={() => skip(-1)} className="we-btn-ghost p-2" title="Back 5 s (arrow keys step 1 frame)">
             <SkipBack className="w-5 h-5" />
           </button>
           <button
@@ -70,8 +90,11 @@ export function Preview() {
           >
             {isPlaying ? <Pause className="w-6 h-6" /> : <Play className="w-6 h-6" />}
           </button>
-          <button onClick={() => stepFrame(1)} className="we-btn-ghost p-2" title="Next frame">
+          <button onClick={() => skip(1)} className="we-btn-ghost p-2" title="Forward 5 s (arrow keys step 1 frame)">
             <SkipForward className="w-5 h-5" />
+          </button>
+          <button onClick={jumpToEnd} className="we-btn-ghost p-2" title="Jump to end (End)">
+            <ChevronsRight className="w-5 h-5" />
           </button>
         </div>
 

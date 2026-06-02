@@ -1,44 +1,85 @@
-# Build + publish a signed WeEdit release on every `v*` tag.
+# Two-job CI:
+#   • `build` runs on every push to main, every PR, and manual triggers —
+#     produces an unsigned installer attached to the run as a workflow artifact
+#     so contributors / testers can grab the latest dev build at any time.
+#   • `release` runs only on `v*` tag pushes — signs the installer + latest.json
+#     and publishes a GitHub Release. Existing installs auto-update from this.
 #
-# What this does on `git push --tags`:
-# 1. Spins up windows-latest
-# 2. Installs Node + Rust + npm deps
-# 3. Downloads ffmpeg-essentials into src-tauri/binaries (so the installer
-#    bundles it — end users don't need ffmpeg installed)
-# 4. Runs tauri-action which: cargo-builds the app, packages MSI + NSIS,
-#    signs the updater artifacts with TAURI_SIGNING_PRIVATE_KEY, and uploads
-#    everything (MSI, EXE, latest.json) to a GitHub Release matching the tag.
-#
-# Prereqs (one-time setup; see docs in the chat where this was added):
-#   1. `npm run tauri signer generate -- --write-keys ~/.tauri/weedit.key`
-#      → produces ~/.tauri/weedit.key (PRIVATE) and ~/.tauri/weedit.key.pub
-#   2. Paste the public key into src-tauri/tauri.conf.json `plugins.updater.pubkey`
-#   3. In GitHub repo Settings → Secrets → Actions, add:
-#        TAURI_SIGNING_PRIVATE_KEY         = (contents of ~/.tauri/weedit.key)
-#        TAURI_SIGNING_PRIVATE_KEY_PASSWORD = (the password you set, or empty)
-#   4. Replace the REPLACE_WITH_YOUR_* placeholders in tauri.conf.json with
-#      your actual repo URL
+# Prereqs (one-time setup):
+#   1. Public key is already in src-tauri/tauri.conf.json (we generated it).
+#   2. Add the private-key file contents as repo secret TAURI_SIGNING_PRIVATE_KEY.
+#      The key has NO password, so TAURI_SIGNING_PRIVATE_KEY_PASSWORD stays empty
+#      (still required by the action — set it to "" or just an empty secret).
+#   3. Set the GitHub repo URL placeholders in src-tauri/tauri.conf.json
+#      (plugins.updater.endpoints).
 #
 # Releasing:
-#   - bump version in package.json + src-tauri/tauri.conf.json + src-tauri/Cargo.toml
-#   - git commit -am "release: vX.Y.Z"
-#   - git tag vX.Y.Z
+#   - Bump version in package.json + src-tauri/tauri.conf.json + src-tauri/Cargo.toml
+#   - git commit -am "release: vX.Y.Z" && git tag vX.Y.Z
 #   - git push origin main --tags
-# GitHub Actions does the rest; ~10 min later end-users get the update via
-# Check for updates… in the hamburger menu (or the silent on-startup check).
+# A signed release appears under GitHub Releases ~10 min later; installed apps
+# auto-update via Check for updates.
 
-name: Release
+name: CI
 
 on:
   push:
-    tags:
-      - "v*"
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
   build:
+    name: Build (unsigned)
+    # Skip when this push is a release tag — the `release` job handles that.
+    if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('src-tauri/Cargo.lock', 'src-tauri/Cargo.toml') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-
+
+      - name: Install npm deps
+        run: npm ci
+
+      - name: Fetch bundled ffmpeg
+        run: npm run fetch-binaries
+
+      - name: Build app + installers (no signing)
+        run: npm run tauri:build
+
+      - name: Upload installers as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WeEdit-${{ github.sha }}
+          retention-days: 14
+          path: |
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/nsis/*.exe
+
+  release:
+    name: Release (signed + published)
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -73,9 +114,8 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          # tauri.release.conf.json overlays `createUpdaterArtifacts: true` so
-          # the updater latest.json + signature get generated. Local builds
-          # don't need keys; only CI signs.
+          # tauri.release.conf.json overlays createUpdaterArtifacts: true so
+          # latest.json + signatures get generated; local builds skip signing.
           args: "--config src-tauri/tauri.release.conf.json"
           tagName: ${{ github.ref_name }}
           releaseName: "WeEdit ${{ github.ref_name }}"

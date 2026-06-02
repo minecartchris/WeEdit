@@ -1,4 +1,5 @@
-import { newProject, openProject, saveProject } from "@/lib/project";
+import { commitVersion } from "@/lib/history";
+import { newProject, openProject, saveProject, snapshotForFile } from "@/lib/project";
 import { useEditor } from "@/state/editor";
 
 // Central registry of keyboard commands. Each has a stable id, a label for the
@@ -28,6 +29,19 @@ function stepFrame(dir: 1 | -1) {
   setPlayhead(playheadSec + dir * (1 / project.fps));
 }
 
+// Drop a manual version-history checkpoint of the current project. No-ops (with
+// a console note) until the project has been saved to disk at least once.
+function saveVersion() {
+  const folder = useEditor.getState().projectPath;
+  if (!folder) {
+    console.warn("Save a version: project not saved to disk yet (Ctrl+S first).");
+    return;
+  }
+  void commitVersion(folder, snapshotForFile(), "Checkpoint", "manual").catch((e) =>
+    console.error("Save version failed:", e),
+  );
+}
+
 export const SHORTCUT_COMMANDS: ShortcutCommand[] = [
   { id: "play-pause", label: "Play / pause", defaultBinding: "space", run: () => useEditor.getState().togglePlay() },
   { id: "split", label: "Split at playhead", defaultBinding: "s", run: () => useEditor.getState().splitAtPlayhead() },
@@ -37,6 +51,7 @@ export const SHORTCUT_COMMANDS: ShortcutCommand[] = [
   { id: "undo", label: "Undo", defaultBinding: "ctrl+z", run: () => useEditor.getState().undo() },
   { id: "redo", label: "Redo", defaultBinding: "ctrl+shift+z", run: () => useEditor.getState().redo() },
   { id: "save", label: "Save project", defaultBinding: "ctrl+s", run: () => void saveProject().catch((e) => console.error("Save failed:", e)) },
+  { id: "save-version", label: "Save a version (checkpoint)", defaultBinding: "ctrl+alt+s", run: saveVersion },
   { id: "open", label: "Open project", defaultBinding: "ctrl+o", run: () => void openProject().catch((e) => console.error("Open failed:", e)) },
   { id: "new", label: "New project", defaultBinding: "ctrl+n", run: () => newProject() },
   { id: "jump-start", label: "Jump to start", defaultBinding: "home", run: () => useEditor.getState().setPlayhead(0) },

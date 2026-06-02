@@ -5,6 +5,7 @@ import {
   FilePlus,
   FolderOpen,
   HelpCircle,
+  History,
   Keyboard,
   Megaphone,
   Menu as MenuIcon,
@@ -16,6 +17,7 @@ import {
 import { useEffect, useState } from "react";
 import { ExportModal } from "@/components/ExportModal";
 import { GpuBadge } from "@/components/GpuBadge";
+import { HistoryPanel } from "@/components/HistoryPanel";
 import { SettingsModal } from "@/components/SettingsModal";
 import { UpdaterDialog } from "@/components/UpdaterDialog";
 import { Menu, MenuItem, MenuLabel, MenuSeparator } from "@/components/ui/Menu";
@@ -42,6 +44,7 @@ export function TopBar() {
   const clearRecentProjects = useIntegrations((s) => s.clearRecentProjects);
   const [exportOpen, setExportOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [updaterOpen, setUpdaterOpen] = useState(false);
   // Silent updater check ~5s after launch — pops the dialog if an update is
   // available, stays quiet otherwise.
@@ -116,6 +119,7 @@ export function TopBar() {
         <MenuItem icon={FolderOpen} onSelect={swallow(openProject)}    shortcut="Ctrl+O">Open project…</MenuItem>
         <MenuItem icon={Save}       onSelect={swallow(saveProject)}    shortcut="Ctrl+S">Save project</MenuItem>
         <MenuItem icon={FileDown}   onSelect={swallow(saveProjectAs)}>Save project as…</MenuItem>
+        <MenuItem icon={History}    onSelect={() => setHistoryOpen(true)}>Version history…</MenuItem>
         {recentProjects.length > 0 && (
           <>
             <MenuSeparator />
@@ -224,6 +228,7 @@ export function TopBar() {
 
       <ExportModal open={exportOpen} onClose={() => setExportOpen(false)} />
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <HistoryPanel open={historyOpen} onClose={() => setHistoryOpen(false)} />
       <UpdaterDialog open={updaterOpen} onClose={() => setUpdaterOpen(false)} />
       <UpdaterDialog open={autoUpdaterOpen} onClose={() => setAutoUpdaterOpen(false)} silentIfUpToDate />
     </header>

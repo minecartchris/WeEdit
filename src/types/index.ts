@@ -170,12 +170,25 @@ export interface PanelSizes {
   timelinePx: number;
 }
 
+/** Auto-save + automatic version-snapshot behavior (configurable in Settings). */
+export interface AutosavePrefs {
+  /** Master switch for the debounced disk auto-save. */
+  enabled: boolean;
+  /** How long to wait after the last edit before writing, in ms. */
+  debounceMs: number;
+  /** Whether auto-save also drops periodic version-history commits. */
+  versionsEnabled: boolean;
+  /** Minimum minutes between automatic version commits. */
+  versionIntervalMin: number;
+}
+
 export interface UiPrefs {
   theme: ThemeMode;
   positionUnit: PositionUnit;
   /** Command id → key combo (e.g. "ctrl+shift+z"). Overrides defaults. */
   customShortcuts: Record<string, string>;
   panelSizes: PanelSizes;
+  autosave: AutosavePrefs;
 }
 
 export interface ProjectMeta {

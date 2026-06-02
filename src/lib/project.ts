@@ -78,7 +78,7 @@ async function writeProjectToFolder(folder: string, file: ProjectFileV1): Promis
   });
 }
 
-function snapshotForFile(): ProjectFileV1 {
+export function snapshotForFile(): ProjectFileV1 {
   const s = useEditor.getState();
   return {
     version: 1,

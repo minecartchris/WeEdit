@@ -19,6 +19,7 @@ export function SettingsModal({ open, onClose }: Props) {
       <div className="p-5 flex flex-col gap-7">
         <AppearanceSection />
         <EditorSection />
+        <AutosaveSection />
         <ShortcutsSection />
       </div>
     </Modal>
@@ -137,6 +138,135 @@ function ShortcutsSection() {
         <RotateCcw className="w-3.5 h-3.5" />
         Reset all to defaults
       </button>
+    </Section>
+  );
+}
+
+function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <button
+      role="switch"
+      aria-checked={on}
+      onClick={() => onChange(!on)}
+      className={[
+        "relative h-5 w-9 shrink-0 rounded-full transition-colors",
+        on ? "bg-we-teal" : "bg-we-border",
+      ].join(" ")}
+    >
+      <span
+        className={[
+          "absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform",
+          on ? "translate-x-[18px]" : "translate-x-0.5",
+        ].join(" ")}
+      />
+    </button>
+  );
+}
+
+function NumberField({
+  value,
+  min,
+  max,
+  step,
+  suffix,
+  disabled,
+  onCommit,
+}: {
+  value: number;
+  min: number;
+  max: number;
+  step?: number;
+  suffix: string;
+  disabled?: boolean;
+  onCommit: (v: number) => void;
+}) {
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => setDraft(String(value)), [value]);
+  const commit = () => {
+    const n = Number(draft);
+    if (!Number.isFinite(n)) {
+      setDraft(String(value));
+      return;
+    }
+    onCommit(Math.max(min, Math.min(max, n)));
+  };
+  return (
+    <div className="flex items-center gap-1.5">
+      <input
+        type="number"
+        min={min}
+        max={max}
+        step={step ?? 1}
+        value={draft}
+        disabled={disabled}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+        }}
+        className="w-16 rounded border border-we-border bg-we-bg px-2 py-1 text-sm text-we-ink text-right disabled:opacity-40"
+      />
+      <span className="text-xs text-we-muted">{suffix}</span>
+    </div>
+  );
+}
+
+function Row({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-4 px-3 py-2.5">
+      <div className="min-w-0">
+        <div className="text-sm text-we-ink">{label}</div>
+        {hint && <div className="text-[11px] text-we-muted mt-0.5">{hint}</div>}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function AutosaveSection() {
+  const autosave = usePrefs((s) => s.autosave);
+  const setAutosave = usePrefs((s) => s.setAutosave);
+
+  return (
+    <Section
+      title="Auto-save & versions"
+      hint="Saving applies once a project has been saved to disk at least once."
+    >
+      <div className="flex flex-col divide-y divide-we-border rounded-lg border border-we-border overflow-hidden">
+        <Row label="Auto-save" hint="Write changes to disk after you stop editing.">
+          <Toggle on={autosave.enabled} onChange={(enabled) => setAutosave({ enabled })} />
+        </Row>
+        <Row label="Save after idle" hint="How long to wait after your last edit.">
+          <NumberField
+            value={autosave.debounceMs / 1000}
+            min={0.25}
+            max={30}
+            step={0.25}
+            suffix="sec"
+            disabled={!autosave.enabled}
+            onCommit={(v) => setAutosave({ debounceMs: Math.round(v * 1000) })}
+          />
+        </Row>
+        <Row
+          label="Keep version history"
+          hint="Drop a restorable checkpoint periodically while you work."
+        >
+          <Toggle
+            on={autosave.versionsEnabled}
+            onChange={(versionsEnabled) => setAutosave({ versionsEnabled })}
+          />
+        </Row>
+        <Row label="New version every" hint="Minimum time between automatic checkpoints.">
+          <NumberField
+            value={autosave.versionIntervalMin}
+            min={1}
+            max={120}
+            suffix="min"
+            disabled={!autosave.versionsEnabled}
+            onCommit={(versionIntervalMin) => setAutosave({ versionIntervalMin })}
+          />
+        </Row>
+      </div>
     </Section>
   );
 }

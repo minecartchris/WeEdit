@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { loadConfig, saveConfig } from "@/lib/config";
-import type { PanelSizes, PositionUnit, ThemeMode, UiPrefs } from "@/types";
+import type { AutosavePrefs, PanelSizes, PositionUnit, ThemeMode, UiPrefs } from "@/types";
 
 // App-global UI preferences (theme, editor unit, custom shortcuts, panel sizes).
 // Distinct from the per-project `editor` store — these persist to config.json
@@ -12,11 +12,19 @@ const DEFAULT_PANEL_SIZES: PanelSizes = {
   timelinePx: 300,
 };
 
+const DEFAULT_AUTOSAVE: AutosavePrefs = {
+  enabled: true,
+  debounceMs: 1500,
+  versionsEnabled: true,
+  versionIntervalMin: 5,
+};
+
 const DEFAULTS: UiPrefs = {
   theme: "system",
   positionUnit: "percent",
   customShortcuts: {},
   panelSizes: DEFAULT_PANEL_SIZES,
+  autosave: DEFAULT_AUTOSAVE,
 };
 
 interface PrefsState extends UiPrefs {
@@ -30,6 +38,8 @@ interface PrefsState extends UiPrefs {
   setPanelSize: (key: keyof PanelSizes, px: number) => void;
   /** Persist the current panel sizes (call once on splitter release). */
   savePanelSizes: () => void;
+  /** Patch autosave prefs and persist. */
+  setAutosave: (patch: Partial<AutosavePrefs>) => void;
 }
 
 // Apply the theme to <html>: toggles the `dark` class Tailwind keys off and
@@ -77,6 +87,7 @@ export const usePrefs = create<PrefsState>((set, get) => ({
         positionUnit: ui.positionUnit ?? DEFAULTS.positionUnit,
         customShortcuts: ui.customShortcuts ?? {},
         panelSizes: { ...DEFAULT_PANEL_SIZES, ...(ui.panelSizes ?? {}) },
+        autosave: { ...DEFAULT_AUTOSAVE, ...(ui.autosave ?? {}) },
       };
       set({ ...merged, loaded: true });
       applyTheme(merged.theme);
@@ -111,4 +122,10 @@ export const usePrefs = create<PrefsState>((set, get) => ({
   setPanelSize: (key, px) =>
     set((s) => ({ panelSizes: { ...s.panelSizes, [key]: Math.round(px) } })),
   savePanelSizes: () => void persist({ panelSizes: get().panelSizes }),
+  setAutosave: (patch) =>
+    set((s) => {
+      const autosave = { ...s.autosave, ...patch };
+      void persist({ autosave });
+      return { autosave };
+    }),
 }));

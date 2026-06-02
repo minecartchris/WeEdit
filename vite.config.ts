@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { nodePolyfills } from "vite-plugin-node-polyfills";
 import path from "node:path";
 
 // Tauri-aware Vite config. Tauri injects TAURI_DEV_HOST when targeting
@@ -7,7 +8,13 @@ import path from "node:path";
 const host = process.env.TAURI_DEV_HOST;
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    // y-webrtc → simple-peer references Node globals (global / Buffer / process /
+    // stream) that don't exist in the WebView. Polyfill them or peer connections
+    // throw at runtime.
+    nodePolyfills({ globals: { Buffer: true, global: true, process: true } }),
+  ],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "src"),

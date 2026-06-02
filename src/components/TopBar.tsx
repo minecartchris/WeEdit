@@ -15,6 +15,7 @@ import {
   UserPlus,
 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { CollabModal } from "@/components/CollabModal";
 import { ExportModal } from "@/components/ExportModal";
 import { GpuBadge } from "@/components/GpuBadge";
 import { HistoryPanel } from "@/components/HistoryPanel";
@@ -29,6 +30,7 @@ import {
   saveProject,
   saveProjectAs,
 } from "@/lib/project";
+import { useCollab } from "@/state/collab";
 import { useEditor } from "@/state/editor";
 import { useIntegrations } from "@/state/integrations";
 
@@ -45,7 +47,10 @@ export function TopBar() {
   const [exportOpen, setExportOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [collabOpen, setCollabOpen] = useState(false);
   const [updaterOpen, setUpdaterOpen] = useState(false);
+  const collabStatus = useCollab((s) => s.status);
+  const peerCount = useCollab((s) => s.peerCount);
   // Silent updater check ~5s after launch — pops the dialog if an update is
   // available, stays quiet otherwise.
   const [autoUpdaterOpen, setAutoUpdaterOpen] = useState(false);
@@ -152,11 +157,18 @@ export function TopBar() {
 
       <div className="flex items-center gap-2 pl-3">
         <button
-          className="w-7 h-7 rounded-full border border-dashed border-we-muted/60 grid place-items-center text-we-muted hover:text-we-ink hover:border-solid"
-          title="Invite collaborators (Phase 6+)"
-          aria-label="Invite collaborators"
+          onClick={() => setCollabOpen(true)}
+          className={[
+            "h-7 px-2 rounded-full border grid grid-flow-col items-center gap-1 text-xs transition-colors",
+            collabStatus === "connected"
+              ? "border-we-teal text-we-teal bg-we-teal/10"
+              : "border-dashed border-we-muted/60 text-we-muted hover:text-we-ink hover:border-solid",
+          ].join(" ")}
+          title={collabStatus === "connected" ? "Collaboration session" : "Invite collaborators"}
+          aria-label="Collaborate"
         >
           <UserPlus className="w-3.5 h-3.5" />
+          {collabStatus === "connected" && <span>{peerCount + 1}</span>}
         </button>
         <SaveStatus path={projectPath} savedAt={lastSavedAt} />
       </div>
@@ -229,6 +241,7 @@ export function TopBar() {
       <ExportModal open={exportOpen} onClose={() => setExportOpen(false)} />
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <HistoryPanel open={historyOpen} onClose={() => setHistoryOpen(false)} />
+      <CollabModal open={collabOpen} onClose={() => setCollabOpen(false)} />
       <UpdaterDialog open={updaterOpen} onClose={() => setUpdaterOpen(false)} />
       <UpdaterDialog open={autoUpdaterOpen} onClose={() => setAutoUpdaterOpen(false)} silentIfUpToDate />
     </header>

@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { ClipBlock } from "@/components/ClipBlock";
+import { CollaboratorCursors } from "@/components/CollaboratorCursors";
 import { Menu, MenuItem, MenuLabel, MenuSeparator } from "@/components/ui/Menu";
 import { isMediaCompatibleWithTrack } from "@/lib/clips";
 import { formatTimecode, useEditor } from "@/state/editor";
@@ -197,6 +198,7 @@ export function Timeline() {
               <TrackRow key={t.id} track={t} totalSec={totalSec} pxPerSec={pxPerSec} />
             ))}
             <PlayheadOverlay playheadSec={playheadSec} pxPerSec={pxPerSec} />
+            <CollaboratorCursors pxPerSec={pxPerSec} />
             <TimelineDropHint visible={tracks.every((t) => t.clipIds.length === 0)} />
           </div>
         </div>

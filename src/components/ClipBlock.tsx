@@ -48,18 +48,24 @@ export function ClipBlock({ clip, pxPerSec }: ClipBlockProps) {
   }, [allClips, clip.id, playheadSec]);
 
   // ── Body drag (move along time axis) ──
-  const onBodyMouseDown = (e: React.MouseEvent) => {
+  const onBodyPointerDown = (e: React.PointerEvent) => {
     if (editingText) return;
     if (e.button !== 0) return;
+    // preventDefault + pointer capture stop the browser from kicking off a
+    // native HTML5 drag (which would fire `dragend` instead of `pointerup`,
+    // leaking our move listener so the clip "sticks" to the cursor).
+    e.preventDefault();
     e.stopPropagation();
     selectClip(clip.id, e.shiftKey);
     pushHistory();
 
+    const el = e.currentTarget as HTMLElement;
+    el.setPointerCapture?.(e.pointerId);
     const startX = e.clientX;
     const initialStart = clip.startSec;
     const anchors = collectAnchors();
 
-    const onMove = (ev: MouseEvent) => {
+    const onMove = (ev: PointerEvent) => {
       const dPx = ev.clientX - startX;
       const dSec = dPx / pxPerSec;
       let nextStart = Math.max(0, initialStart + dSec);
@@ -90,21 +96,27 @@ export function ClipBlock({ clip, pxPerSec }: ClipBlockProps) {
       }
     };
     const onUp = () => {
-      document.removeEventListener("mousemove", onMove);
-      document.removeEventListener("mouseup", onUp);
+      try { el.releasePointerCapture?.(e.pointerId); } catch { /* capture already lost (e.g. remounted across tracks) */ }
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
     };
-    document.addEventListener("mousemove", onMove);
-    document.addEventListener("mouseup", onUp);
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
   };
 
   // ── Edge trim ──
-  const onTrimMouseDown = (edge: "left" | "right") => (e: React.MouseEvent) => {
+  const onTrimPointerDown = (edge: "left" | "right") => (e: React.PointerEvent) => {
     if (editingText) return;
     if (e.button !== 0) return;
+    e.preventDefault();
     e.stopPropagation();
     selectClip(clip.id);
     pushHistory();
 
+    const el = e.currentTarget as HTMLElement;
+    el.setPointerCapture?.(e.pointerId);
     const startX = e.clientX;
     const initial = {
       startSec: clip.startSec,
@@ -114,7 +126,7 @@ export function ClipBlock({ clip, pxPerSec }: ClipBlockProps) {
     const sourceDur =
       sourceMedia?.durationSec != null ? sourceMedia.durationSec : Infinity;
     const anchors = collectAnchors();
-    const window = clipNoOverlapWindow(
+    const overlapWin = clipNoOverlapWindow(
       clip.id,
       clip.trackId,
       initial.durationSec,
@@ -122,12 +134,12 @@ export function ClipBlock({ clip, pxPerSec }: ClipBlockProps) {
       useEditor.getState().clips,
     );
 
-    const onMove = (ev: MouseEvent) => {
+    const onMove = (ev: PointerEvent) => {
       const dSec = (ev.clientX - startX) / pxPerSec;
       if (edge === "left") {
         // Left edge: clamp by source start (sourceInSec >= 0), MIN_DUR, t>=0,
         // AND no-overlap window's lower bound.
-        const lowerByOverlap = window.min - initial.startSec;
+        const lowerByOverlap = overlapWin.min - initial.startSec;
         const minDragged = Math.max(
           -initial.sourceInSec,
           -initial.startSec,
@@ -152,9 +164,9 @@ export function ClipBlock({ clip, pxPerSec }: ClipBlockProps) {
         // Right edge: extend duration up to source remaining AND up to the
         // next neighbour's start.
         const sourceMaxDur = Math.max(MIN_CLIP_DURATION, sourceDur - initial.sourceInSec);
-        const overlapMaxDur = window.max === Infinity
+        const overlapMaxDur = overlapWin.max === Infinity
           ? Infinity
-          : Math.max(MIN_CLIP_DURATION, window.max - initial.startSec + initial.durationSec);
+          : Math.max(MIN_CLIP_DURATION, overlapWin.max - initial.startSec + initial.durationSec);
         const maxDur = Math.min(sourceMaxDur, overlapMaxDur);
         let nextDur = Math.max(MIN_CLIP_DURATION, Math.min(maxDur, initial.durationSec + dSec));
         if (!ev.shiftKey) {
@@ -166,11 +178,14 @@ export function ClipBlock({ clip, pxPerSec }: ClipBlockProps) {
       }
     };
     const onUp = () => {
-      document.removeEventListener("mousemove", onMove);
-      document.removeEventListener("mouseup", onUp);
+      try { el.releasePointerCapture?.(e.pointerId); } catch { /* capture already lost (e.g. remounted across tracks) */ }
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
     };
-    document.addEventListener("mousemove", onMove);
-    document.addEventListener("mouseup", onUp);
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
   };
 
   // ── Double-click to edit text clip ──
@@ -211,14 +226,16 @@ export function ClipBlock({ clip, pxPerSec }: ClipBlockProps) {
           : "bg-we-hover",
       ].join(" ")}
       style={{ left, width }}
-      onMouseDown={onBodyMouseDown}
+      draggable={false}
+      onDragStart={(e) => e.preventDefault()}
+      onPointerDown={onBodyPointerDown}
       onClick={(e) => e.stopPropagation()}
       onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
       title={renderClipTitle(clip, sourceMedia)}
     >
       <div
-        onMouseDown={onTrimMouseDown("left")}
+        onPointerDown={onTrimPointerDown("left")}
         className="w-1.5 shrink-0 bg-we-teal/60 hover:bg-we-teal cursor-ew-resize"
       />
 
@@ -236,7 +253,7 @@ export function ClipBlock({ clip, pxPerSec }: ClipBlockProps) {
       </div>
 
       <div
-        onMouseDown={onTrimMouseDown("right")}
+        onPointerDown={onTrimPointerDown("right")}
         className="w-1.5 shrink-0 bg-we-teal/60 hover:bg-we-teal cursor-ew-resize"
       />
 

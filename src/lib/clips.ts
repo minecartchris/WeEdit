@@ -5,6 +5,39 @@ export const DEFAULT_IMAGE_DURATION = 5;
 export const SNAP_PX = 6;
 export const TEXT_CHAR_LIMIT = 200;
 
+/** Min/max for the on-stage scale (zoom) multiplier. */
+export const MIN_SCALE = 0.1;
+export const MAX_SCALE = 4;
+
+/**
+ * Backfill transform fields on a clip loaded from disk. Projects saved before
+ * positioning existed have no xPct/yPct/scale; default them to centered /
+ * natural size so old projects open unchanged.
+ */
+export function normalizeClip(clip: Clip): Clip {
+  const xPct = typeof clip.xPct === "number" ? clip.xPct : 50;
+  const yPct = typeof clip.yPct === "number" ? clip.yPct : 50;
+  const scale = typeof clip.scale === "number" ? clip.scale : 1;
+  return { ...clip, xPct, yPct, scale } as Clip;
+}
+
+export function normalizeClips(
+  clips: Record<string, Clip>,
+): Record<string, Clip> {
+  const out: Record<string, Clip> = {};
+  for (const [id, c] of Object.entries(clips)) out[id] = normalizeClip(c);
+  return out;
+}
+
+/** Convert a percentage (0..100) of a dimension to pixels, and back. */
+export function pctToPx(pct: number, dimensionPx: number): number {
+  return Math.round((pct / 100) * dimensionPx);
+}
+export function pxToPct(px: number, dimensionPx: number): number {
+  if (dimensionPx <= 0) return 0;
+  return (px / dimensionPx) * 100;
+}
+
 /** Which media kinds can land on a given track kind. */
 export function isMediaCompatibleWithTrack(
   kind: MediaItem["kind"],
@@ -39,6 +72,9 @@ export function makeClipFromMedia(
     mediaId: media.id,
     opacity: 1,
     volume: 1,
+    xPct: 50,
+    yPct: 50,
+    scale: 1,
   };
 }
 

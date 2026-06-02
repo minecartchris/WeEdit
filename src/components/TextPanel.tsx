@@ -135,6 +135,7 @@ function addPresetClip(preset: TextPreset | null) {
     color: preset?.color ?? "#ffffff",
     xPct: preset?.xPct ?? 50,
     yPct: preset?.yPct ?? 50,
+    scale: 1,
   };
   state.addClip(clip);
 }

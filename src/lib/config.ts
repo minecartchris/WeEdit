@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { appConfigDir } from "@tauri-apps/api/path";
+import type { UiPrefs } from "@/types";
 
 // App-wide config persisted to %APPDATA%/com.weedit.app/config.json on Windows
 // (or the equivalent per OS). Twitch tokens + saved NAS connections live here.
@@ -23,6 +24,8 @@ export interface AppConfig {
   jamendoApiKey?: string;
   /** Most-recently-opened .weedit project folders, newest first, max 10. */
   recentProjects?: string[];
+  /** App-global UI preferences (theme, position unit, shortcuts, panel sizes). */
+  ui?: Partial<UiPrefs>;
 }
 
 export interface TwitchConfig {

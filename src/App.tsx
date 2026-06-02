@@ -8,6 +8,7 @@ import { useAutoSave } from "@/hooks/useAutoSave";
 import { usePlayback } from "@/hooks/usePlayback";
 import { useShortcuts } from "@/hooks/useShortcuts";
 import { useIntegrations } from "@/state/integrations";
+import { usePrefs } from "@/state/prefs";
 
 export default function App() {
   useShortcuts();
@@ -15,9 +16,11 @@ export default function App() {
   usePlayback();
 
   const loadIntegrations = useIntegrations((s) => s.load);
+  const loadPrefs = usePrefs((s) => s.load);
   useEffect(() => {
+    void loadPrefs().catch((err) => console.error("Failed to load prefs:", err));
     void loadIntegrations().catch((err) => console.error("Failed to load integrations:", err));
-  }, [loadIntegrations]);
+  }, [loadIntegrations, loadPrefs]);
 
   return (
     <div className="h-full w-full flex flex-col">

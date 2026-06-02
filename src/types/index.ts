@@ -58,6 +58,20 @@ export interface Track {
   clipIds: string[];
 }
 
+/**
+ * A single keyframe for animated transforms. `tSec` is relative to the clip
+ * start. The preview interpolates xPct/yPct/scale linearly between the
+ * surrounding keyframes; when a clip has no keyframes, its static
+ * `xPct/yPct/scale` fields are used instead.
+ */
+export interface Keyframe {
+  /** Time within the clip, in seconds from clip start. */
+  tSec: number;
+  xPct: number;
+  yPct: number;
+  scale: number;
+}
+
 export interface ClipBase {
   id: string;
   trackId: string;
@@ -67,9 +81,22 @@ export interface ClipBase {
   durationSec: number;
   /** Where in the source this clip starts (for trims), in seconds. */
   sourceInSec: number;
+  /** Optional X/Y/Zoom keyframes, sorted by tSec. */
+  keyframes?: Keyframe[];
 }
 
-export interface MediaClip extends ClipBase {
+/**
+ * On-stage placement shared by visible clips (media + text). Center of the
+ * element as a percentage of the stage (50/50 = centered); `scale` is a
+ * multiplier (1 = natural size / object-contain fit).
+ */
+export interface Transform {
+  xPct: number;
+  yPct: number;
+  scale: number;
+}
+
+export interface MediaClip extends ClipBase, Transform {
   kind: "video" | "audio" | "image";
   mediaId: string;
   /** 0..1, applies to video/image. */
@@ -78,14 +105,12 @@ export interface MediaClip extends ClipBase {
   volume: number;
 }
 
-export interface TextClip extends ClipBase {
+export interface TextClip extends ClipBase, Transform {
   kind: "text";
   text: string;
   fontFamily: string;
   fontSizePx: number;
   color: string;
-  xPct: number;
-  yPct: number;
 }
 
 export type Clip = MediaClip | TextClip;
@@ -105,6 +130,29 @@ export type LibraryFilter =
   | "transitions"
   | "extras"
   | "backgrounds";
+
+// ── UI preferences (app-global, not per-project) ────────────────────────────
+
+export type ThemeMode = "light" | "dark" | "system";
+/** How position values are shown/edited in the Inspector. */
+export type PositionUnit = "percent" | "pixels";
+
+export interface PanelSizes {
+  /** Media library column width in px. */
+  libraryPx: number;
+  /** Inspector column width in px. */
+  inspectorPx: number;
+  /** Timeline panel height in px. */
+  timelinePx: number;
+}
+
+export interface UiPrefs {
+  theme: ThemeMode;
+  positionUnit: PositionUnit;
+  /** Command id → key combo (e.g. "ctrl+shift+z"). Overrides defaults. */
+  customShortcuts: Record<string, string>;
+  panelSizes: PanelSizes;
+}
 
 export interface ProjectMeta {
   name: string;

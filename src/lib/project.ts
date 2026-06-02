@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { normalizeClips } from "@/lib/clips";
 import { useEditor } from "@/state/editor";
 import { useIntegrations } from "@/state/integrations";
 import type { Clip, MediaItem, ProjectMeta, Track } from "@/types";
@@ -127,7 +128,7 @@ export async function openProjectFromPath(path: string): Promise<void> {
       project: data.project,
       media: data.media,
       tracks: data.tracks,
-      clips: data.clips,
+      clips: normalizeClips(data.clips),
     },
     path,
     data.savedAt,

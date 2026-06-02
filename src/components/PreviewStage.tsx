@@ -1,7 +1,8 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { MAX_SCALE, MIN_SCALE } from "@/lib/clips";
 import { useEditor } from "@/state/editor";
-import type { AspectRatio, MediaClip, MediaItem, TextClip } from "@/types";
+import type { AspectRatio, Clip, MediaClip, MediaItem, TextClip } from "@/types";
 
 // Stage that renders whatever clip is active at the playhead. Phase-2-MVP version:
 // - Topmost video clip drives a single <video> element.
@@ -154,7 +155,7 @@ function VideoLayer({
 
   return (
     <>
-      <div style={transformStyle(clip)}>
+      <div data-cliplayer={clip.id} style={transformStyle(clip)}>
         <video
           ref={ref}
           src={convertFileSrc(media.src)}
@@ -239,7 +240,7 @@ function ExtractedAudioTrack({
 
 function ImageLayer({ media, clip }: { media: MediaItem; clip: MediaClip }) {
   return (
-    <div style={transformStyle(clip)}>
+    <div data-cliplayer={clip.id} style={transformStyle(clip)}>
       <img
         src={convertFileSrc(media.src)}
         alt=""
@@ -253,6 +254,7 @@ function ImageLayer({ media, clip }: { media: MediaItem; clip: MediaClip }) {
 function TextLayer({ clip }: { clip: TextClip }) {
   return (
     <div
+      data-cliplayer={clip.id}
       className="absolute whitespace-pre-wrap text-center"
       style={{
         left: `${clip.xPct}%`,
@@ -341,6 +343,135 @@ function AudioLayer({
   );
 }
 
+// ── On-stage move / resize ───────────────────────────────────────────────────
+//
+// Overlay that lets the user drag the selected clip around the stage and resize
+// it with corner handles, as an alternative to the Inspector sliders (both write
+// the same xPct/yPct/scale). We measure the live layer element via its
+// `data-cliplayer` attribute so the selection box hugs the real rendered bounds
+// (works for both media boxes and content-sized text).
+
+interface Box {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+function StageInteraction({ stageRef }: { stageRef: React.RefObject<HTMLDivElement | null> }) {
+  const clip = useEditor((s): Clip | null => {
+    if (s.selectedClipIds.length !== 1) return null;
+    return s.clips[s.selectedClipIds[0]] ?? null;
+  });
+  const updateClip = useEditor((s) => s.updateClip);
+  const pushHistory = useEditor((s) => s.pushHistory);
+
+  const [box, setBox] = useState<Box | null>(null);
+
+  // Re-measure whenever the clip (transform/text) changes or the stage resizes.
+  const editable = clip != null && clip.kind !== "audio";
+  const transformKey = clip
+    ? `${clip.id}:${clip.xPct}:${clip.yPct}:${clip.scale}:${"fontSizePx" in clip ? clip.fontSizePx : ""}:${"text" in clip ? clip.text : ""}`
+    : null;
+
+  useLayoutEffect(() => {
+    const stage = stageRef.current;
+    if (!stage || !clip || !editable) {
+      setBox(null);
+      return;
+    }
+    const measure = () => {
+      const el = stage.querySelector<HTMLElement>(`[data-cliplayer="${clip.id}"]`);
+      if (!el) {
+        setBox(null);
+        return;
+      }
+      const s = stage.getBoundingClientRect();
+      const r = el.getBoundingClientRect();
+      setBox({ left: r.left - s.left, top: r.top - s.top, width: r.width, height: r.height });
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(stage);
+    return () => ro.disconnect();
+  }, [clip, editable, transformKey, stageRef]);
+
+  if (!clip || !editable || !box) return null;
+
+  const stageRect = () => stageRef.current?.getBoundingClientRect() ?? null;
+
+  // Drag the whole layer → update xPct/yPct.
+  const onMoveDown = (e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const rect = stageRect();
+    if (!rect) return;
+    pushHistory();
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const baseX = clip.xPct;
+    const baseY = clip.yPct;
+    const onMove = (ev: PointerEvent) => {
+      const dxPct = ((ev.clientX - startX) / rect.width) * 100;
+      const dyPct = ((ev.clientY - startY) / rect.height) * 100;
+      updateClip(clip.id, {
+        xPct: clamp(baseX + dxPct, -50, 150),
+        yPct: clamp(baseY + dyPct, -50, 150),
+      });
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
+
+  // Drag a corner → scale about the layer center.
+  const onResizeDown = (e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const rect = stageRect();
+    if (!rect) return;
+    pushHistory();
+    const cx = rect.left + box.left + box.width / 2;
+    const cy = rect.top + box.top + box.height / 2;
+    const startDist = Math.hypot(e.clientX - cx, e.clientY - cy) || 1;
+    const baseScale = clip.scale;
+    const onMove = (ev: PointerEvent) => {
+      const dist = Math.hypot(ev.clientX - cx, ev.clientY - cy);
+      const next = clamp((baseScale * dist) / startDist, MIN_SCALE, MAX_SCALE);
+      updateClip(clip.id, { scale: next });
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
+
+  const handle = "absolute w-3 h-3 rounded-sm bg-we-teal border border-white shadow pointer-events-auto";
+  return (
+    <div
+      className="absolute border-2 border-we-teal/90 cursor-move pointer-events-auto"
+      style={{ left: box.left, top: box.top, width: box.width, height: box.height }}
+      onPointerDown={onMoveDown}
+    >
+      <span className={`${handle} -left-1.5 -top-1.5 cursor-nwse-resize`} onPointerDown={onResizeDown} />
+      <span className={`${handle} -right-1.5 -top-1.5 cursor-nesw-resize`} onPointerDown={onResizeDown} />
+      <span className={`${handle} -left-1.5 -bottom-1.5 cursor-nesw-resize`} onPointerDown={onResizeDown} />
+      <span className={`${handle} -right-1.5 -bottom-1.5 cursor-nwse-resize`} onPointerDown={onResizeDown} />
+    </div>
+  );
+}
+
+function clamp(v: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, v));
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function StageFrame({
@@ -351,8 +482,10 @@ function StageFrame({
   children: React.ReactNode;
 }) {
   const [w, h] = aspect.split(":").map((n) => parseInt(n, 10));
+  const stageRef = useRef<HTMLDivElement>(null);
   return (
     <div
+      ref={stageRef}
       className="relative bg-black grid place-items-center max-h-full max-w-full overflow-hidden"
       style={{
         aspectRatio: `${w} / ${h}`,
@@ -360,6 +493,7 @@ function StageFrame({
       }}
     >
       {children}
+      <StageInteraction stageRef={stageRef} />
     </div>
   );
 }

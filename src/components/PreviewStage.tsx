@@ -154,15 +154,17 @@ function VideoLayer({
 
   return (
     <>
-      <video
-        ref={ref}
-        src={convertFileSrc(media.src)}
-        playsInline
-        preload="auto"
-        crossOrigin="anonymous"
-        className="w-full h-full object-contain"
-        style={{ opacity: clip.opacity }}
-      />
+      <div style={transformStyle(clip)}>
+        <video
+          ref={ref}
+          src={convertFileSrc(media.src)}
+          playsInline
+          preload="auto"
+          crossOrigin="anonymous"
+          className="w-full h-full object-contain"
+          style={{ opacity: clip.opacity }}
+        />
+      </div>
       {multiTrack &&
         media.audioTracks!.map((t) => (
           <ExtractedAudioTrack
@@ -237,23 +239,26 @@ function ExtractedAudioTrack({
 
 function ImageLayer({ media, clip }: { media: MediaItem; clip: MediaClip }) {
   return (
-    <img
-      src={convertFileSrc(media.src)}
-      alt=""
-      className="w-full h-full object-contain"
-      style={{ opacity: clip.opacity }}
-    />
+    <div style={transformStyle(clip)}>
+      <img
+        src={convertFileSrc(media.src)}
+        alt=""
+        className="w-full h-full object-contain"
+        style={{ opacity: clip.opacity }}
+      />
+    </div>
   );
 }
 
 function TextLayer({ clip }: { clip: TextClip }) {
   return (
     <div
-      className="absolute"
+      className="absolute whitespace-pre-wrap text-center"
       style={{
         left: `${clip.xPct}%`,
         top: `${clip.yPct}%`,
-        transform: "translate(-50%, -50%)",
+        transform: `translate(-50%, -50%) scale(${clip.scale})`,
+        transformOrigin: "center",
         fontFamily: clip.fontFamily,
         fontSize: `${clip.fontSizePx}px`,
         color: clip.color,
@@ -264,6 +269,21 @@ function TextLayer({ clip }: { clip: TextClip }) {
       {clip.text}
     </div>
   );
+}
+
+// Absolute, stage-sized box centered on (xPct,yPct) and scaled. Media fills it
+// with object-contain, so the default 50/50/scale-1 overlays the whole stage
+// exactly as before; changing the transform moves/zooms the layer.
+function transformStyle(t: { xPct: number; yPct: number; scale: number }): React.CSSProperties {
+  return {
+    position: "absolute",
+    left: `${t.xPct}%`,
+    top: `${t.yPct}%`,
+    width: "100%",
+    height: "100%",
+    transform: `translate(-50%, -50%) scale(${t.scale})`,
+    transformOrigin: "center",
+  };
 }
 
 interface ActiveAudio {

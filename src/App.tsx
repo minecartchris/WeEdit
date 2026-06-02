@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { Inspector } from "@/components/Inspector";
 import { MediaLibrary } from "@/components/MediaLibrary";
 import { Preview } from "@/components/Preview";
 import { Sidebar } from "@/components/Sidebar";
@@ -27,6 +28,7 @@ export default function App() {
   // are mounted in a later phase; the media library and timeline are resizable
   // now since the media panel being oversized was the main complaint.
   const libraryPx = usePrefs((s) => s.panelSizes.libraryPx);
+  const inspectorPx = usePrefs((s) => s.panelSizes.inspectorPx);
   const timelinePx = usePrefs((s) => s.panelSizes.timelinePx);
   const setPanelSize = usePrefs((s) => s.setPanelSize);
   const savePanelSizes = usePrefs((s) => s.savePanelSizes);
@@ -48,6 +50,18 @@ export default function App() {
           onCommit={savePanelSizes}
         />
         <Preview />
+        <Splitter
+          axis="x"
+          invert
+          value={inspectorPx}
+          min={220}
+          max={560}
+          onChange={(v) => setPanelSize("inspectorPx", v)}
+          onCommit={savePanelSizes}
+        />
+        <div style={{ width: inspectorPx }} className="shrink-0 min-h-0 min-w-0 flex">
+          <Inspector />
+        </div>
       </main>
       <Splitter
         axis="y"

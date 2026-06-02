@@ -346,8 +346,8 @@ function StageFrame({
 
 function EmptyStage() {
   return (
-    <div className="flex flex-col items-center gap-3 text-slate-400">
-      <div className="w-14 h-14 rounded-full bg-white/10 grid place-items-center">
+    <div className="flex flex-col items-center gap-3 text-we-muted">
+      <div className="w-14 h-14 rounded-full bg-we-panel/10 grid place-items-center">
         <span className="text-white/80 font-semibold text-lg tracking-tight">we</span>
       </div>
       <p className="text-sm">Nothing to preview</p>

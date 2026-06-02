@@ -112,7 +112,7 @@ export function UpdaterDialog({ open, onClose, silentIfUpToDate }: Props) {
                 ? `${bytesMb(state.downloaded)} / ${bytesMb(state.total)}`
                 : bytesMb(state.downloaded)}
             </Row>
-            <div className="h-1.5 bg-slate-100 rounded overflow-hidden">
+            <div className="h-1.5 bg-we-hover rounded overflow-hidden">
               <div
                 className="h-full bg-we-teal transition-all"
                 style={{

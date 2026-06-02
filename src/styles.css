@@ -2,7 +2,42 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Theme tokens ──────────────────────────────────────────────────────────
+   Semantic colors are CSS variables (space-separated RGB channels so Tailwind's
+   `/<alpha>` opacity modifiers keep working via rgb(var(--x) / <alpha-value>)).
+   Light is the default on :root; `.dark` (toggled by state/prefs) overrides. */
 @layer base {
+  :root {
+    --we-teal: 26 166 183;
+    --we-teal-hover: 22 138 153;
+    --we-ink: 31 41 55;
+    --we-muted: 107 114 128;
+    --we-panel: 255 255 255;
+    --we-rail: 249 250 251;
+    --we-border: 229 231 235;
+    --we-hover: 241 245 249;
+    --we-timeline: 15 23 42;
+    --we-trackHead: 243 244 246;
+    --we-stage: 0 0 0;
+    --we-scrollbar: 209 213 219;
+    --we-scrollbar-hover: 156 163 175;
+  }
+  .dark {
+    --we-teal: 38 184 200;
+    --we-teal-hover: 80 205 219;
+    --we-ink: 226 232 240;
+    --we-muted: 150 158 170;
+    --we-panel: 30 31 36;
+    --we-rail: 22 23 26;
+    --we-border: 51 54 60;
+    --we-hover: 44 47 54;
+    --we-timeline: 8 10 16;
+    --we-trackHead: 35 37 42;
+    --we-stage: 0 0 0;
+    --we-scrollbar: 71 76 84;
+    --we-scrollbar-hover: 100 106 116;
+  }
+
   html, body, #root {
     height: 100%;
     /* Belt-and-suspenders: if any internal element ever overflows horizontally
@@ -14,14 +49,14 @@
      WebView2 builds. We apply select-none on individual chrome surfaces (top
      bar, sidebar, timeline header, etc.) instead. */
   body {
-    @apply font-sans text-we-ink antialiased;
+    @apply font-sans text-we-ink bg-we-panel antialiased;
   }
 }
 
 @layer components {
   .we-btn {
     @apply inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm
-           text-we-ink hover:bg-slate-100 transition-colors;
+           text-we-ink hover:bg-we-hover transition-colors;
   }
   .we-btn-primary {
     @apply inline-flex items-center gap-1.5 px-4 py-1.5 rounded-md text-sm
@@ -29,17 +64,17 @@
   }
   .we-btn-ghost {
     @apply inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-sm
-           text-we-muted hover:text-we-ink hover:bg-slate-100 transition-colors;
+           text-we-muted hover:text-we-ink hover:bg-we-hover transition-colors;
   }
   .we-input {
-    @apply w-full rounded border border-we-border px-3 py-2 text-sm
+    @apply w-full rounded border border-we-border bg-we-panel text-we-ink px-3 py-2 text-sm
            focus:outline-none focus:ring-2 focus:ring-we-teal/40 focus:border-we-teal
-           disabled:bg-slate-50 disabled:cursor-not-allowed;
+           disabled:bg-we-rail disabled:cursor-not-allowed;
   }
 }
 
 /* Subtle scrollbar styling so panels feel native-app-ish, not browsery. */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 8px; }
-::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+::-webkit-scrollbar-thumb { background: rgb(var(--we-scrollbar)); border-radius: 8px; }
+::-webkit-scrollbar-thumb:hover { background: rgb(var(--we-scrollbar-hover)); }

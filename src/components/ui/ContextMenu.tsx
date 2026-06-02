@@ -70,7 +70,7 @@ export function ContextMenu({ x, y, onClose, children }: ContextMenuProps) {
       ref={panelRef}
       role="menu"
       onContextMenu={(e) => e.preventDefault()}
-      className="fixed z-[1100] min-w-[200px] rounded-md bg-white border border-we-border shadow-lg py-1"
+      className="fixed z-[1100] min-w-[200px] rounded-md bg-we-panel border border-we-border shadow-lg py-1"
       style={{
         top: pos.ready ? pos.top : -9999,
         left: pos.ready ? pos.left : -9999,
@@ -115,7 +115,7 @@ export function ContextMenuItem({
           ? "text-we-muted/60 cursor-not-allowed"
           : danger
           ? "text-red-600 hover:bg-red-50"
-          : "text-we-ink hover:bg-slate-100",
+          : "text-we-ink hover:bg-we-hover",
       ].join(" ")}
     >
       {Icon ? <Icon className="w-4 h-4" /> : <span className="w-4" />}

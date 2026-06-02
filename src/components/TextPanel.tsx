@@ -90,7 +90,7 @@ const PRESETS: TextPreset[] = [
 export function TextPanel() {
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center gap-2 px-5 py-3 border-b border-we-border bg-white">
+      <div className="flex items-center gap-2 px-5 py-3 border-b border-we-border bg-we-panel">
         <Type className="w-5 h-5 text-we-teal" />
         <div className="flex-1 min-w-0">
           <div className="text-sm font-medium text-we-ink">Text</div>
@@ -144,7 +144,7 @@ function PresetCard({ preset }: { preset: TextPreset }) {
   return (
     <button
       onClick={() => addPresetClip(preset)}
-      className="text-left rounded-lg border border-we-border overflow-hidden bg-white hover:shadow-md transition-shadow"
+      className="text-left rounded-lg border border-we-border overflow-hidden bg-we-panel hover:shadow-md transition-shadow"
       title={`${preset.label} — click to add at playhead`}
     >
       <div className="aspect-video bg-slate-900 relative grid place-items-center px-3">
@@ -170,7 +170,7 @@ function BlankCard() {
   return (
     <button
       onClick={() => addPresetClip(null)}
-      className="text-left rounded-lg border border-dashed border-we-border overflow-hidden bg-slate-50 hover:bg-white hover:shadow-md transition-all"
+      className="text-left rounded-lg border border-dashed border-we-border overflow-hidden bg-we-rail hover:bg-we-panel hover:shadow-md transition-all"
       title="Add a blank text clip at the playhead"
     >
       <div className="aspect-video grid place-items-center text-we-muted">

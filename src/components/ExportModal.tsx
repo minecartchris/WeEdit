@@ -402,7 +402,7 @@ function PresetCard({
       onClick={onSelect}
       className={[
         "text-left rounded-md border px-3 py-2 transition-colors",
-        checked ? "border-we-teal bg-we-teal/10" : "border-we-border bg-white hover:bg-slate-50",
+        checked ? "border-we-teal bg-we-teal/10" : "border-we-border bg-we-panel hover:bg-we-hover",
       ].join(" ")}
     >
       <div className="text-sm font-medium text-we-ink flex items-center gap-2">
@@ -434,7 +434,7 @@ function CodecCard({
       onClick={onSelect}
       className={[
         "flex-1 text-left rounded-md border px-3 py-2.5 transition-colors flex items-start gap-2",
-        checked ? "border-we-teal bg-we-teal/10" : "border-we-border bg-white hover:bg-slate-50",
+        checked ? "border-we-teal bg-we-teal/10" : "border-we-border bg-we-panel hover:bg-we-hover",
       ].join(" ")}
     >
       <Icon className={["w-4 h-4 mt-0.5", checked ? "text-we-teal" : "text-we-muted"].join(" ")} />
@@ -471,7 +471,7 @@ function ExportStatusBar({
         {job.log.length > 0 && (
           <details className="text-[11px] text-red-700 mt-1">
             <summary className="cursor-pointer">ffmpeg log (last {job.log.length} lines)</summary>
-            <pre className="mt-1 max-h-32 overflow-auto bg-white/60 p-2 rounded font-mono text-[10px] whitespace-pre-wrap">
+            <pre className="mt-1 max-h-32 overflow-auto bg-we-panel/60 p-2 rounded font-mono text-[10px] whitespace-pre-wrap">
               {job.log.join("\n")}
             </pre>
           </details>
@@ -495,7 +495,7 @@ function ExportStatusBar({
 
   if (job.status === "cancelled") {
     return (
-      <div className="rounded border border-slate-200 bg-slate-50 px-3 py-2 flex items-center gap-2 text-xs text-we-muted">
+      <div className="rounded border border-we-border bg-we-rail px-3 py-2 flex items-center gap-2 text-xs text-we-muted">
         <CircleSlash className="w-4 h-4" />
         <span className="flex-1">Cancelled.</span>
         <button onClick={onDismiss} className="we-btn text-xs">Dismiss</button>
@@ -509,7 +509,7 @@ function ExportStatusBar({
   const eta = job.etaSec != null && job.etaSec > 0 ? ` · ETA ${formatEta(job.etaSec)}` : "";
 
   return (
-    <div className="rounded border border-we-border bg-slate-50 px-3 py-2 space-y-2">
+    <div className="rounded border border-we-border bg-we-rail px-3 py-2 space-y-2">
       <div className="flex items-center gap-2 text-xs text-we-ink">
         {job.status === "compiling" ? (
           <Loader2 className="w-4 h-4 animate-spin text-we-teal" />
@@ -521,7 +521,7 @@ function ExportStatusBar({
         </span>
         <button onClick={() => void onCancel()} className="we-btn text-xs">Cancel</button>
       </div>
-      <div className="h-1.5 bg-slate-200 rounded overflow-hidden">
+      <div className="h-1.5 bg-we-hover rounded overflow-hidden">
         <div className="h-full bg-we-teal transition-all" style={{ width: `${pct}%` }} />
       </div>
     </div>

@@ -41,7 +41,7 @@ export function Modal({
       }}
     >
       <div
-        className="bg-white rounded-lg shadow-xl border border-we-border max-h-[85vh] flex flex-col"
+        className="bg-we-panel rounded-lg shadow-xl border border-we-border max-h-[85vh] flex flex-col"
         style={{ width, maxWidth: "calc(100vw - 32px)" }}
       >
         <div className="flex items-center justify-between px-5 py-3 border-b border-we-border">

@@ -54,7 +54,7 @@ export function Sidebar() {
                 "flex items-center gap-2.5 px-4 py-2 text-sm transition-colors",
                 isActive
                   ? "bg-we-teal/10 text-we-ink font-medium"
-                  : "text-we-ink hover:bg-slate-100",
+                  : "text-we-ink hover:bg-we-hover",
               ].join(" ")}
             >
               <Icon className={["w-4 h-4", isActive ? "text-we-teal" : "text-we-muted"].join(" ")} />

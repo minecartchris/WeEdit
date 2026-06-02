@@ -26,8 +26,8 @@ export class ErrorBoundary extends Component<Props, State> {
   render() {
     if (this.state.error) {
       return (
-        <div className="h-full w-full grid place-items-center bg-slate-50 p-8">
-          <div className="max-w-2xl w-full rounded-lg border border-red-200 bg-white shadow-sm overflow-hidden">
+        <div className="h-full w-full grid place-items-center bg-we-rail p-8">
+          <div className="max-w-2xl w-full rounded-lg border border-red-200 bg-we-panel shadow-sm overflow-hidden">
             <div className="px-5 py-3 bg-red-50 border-b border-red-100 text-red-800 font-medium">
               Something went wrong
             </div>
@@ -35,7 +35,7 @@ export class ErrorBoundary extends Component<Props, State> {
               <p className="text-we-ink">
                 The editor hit a runtime error. Your unsaved work may be lost.
               </p>
-              <pre className="bg-slate-100 rounded p-3 text-xs overflow-auto max-h-72 whitespace-pre-wrap">
+              <pre className="bg-we-hover rounded p-3 text-xs overflow-auto max-h-72 whitespace-pre-wrap">
                 {this.state.error.name}: {this.state.error.message}
                 {this.state.error.stack ? `\n\n${this.state.error.stack}` : ""}
               </pre>

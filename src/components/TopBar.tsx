@@ -9,12 +9,14 @@ import {
   Megaphone,
   Menu as MenuIcon,
   Save,
+  Settings,
   Undo2,
   UserPlus,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { ExportModal } from "@/components/ExportModal";
 import { GpuBadge } from "@/components/GpuBadge";
+import { SettingsModal } from "@/components/SettingsModal";
 import { UpdaterDialog } from "@/components/UpdaterDialog";
 import { Menu, MenuItem, MenuLabel, MenuSeparator } from "@/components/ui/Menu";
 import {
@@ -39,6 +41,7 @@ export function TopBar() {
   const recentProjects = useIntegrations((s) => s.recentProjects);
   const clearRecentProjects = useIntegrations((s) => s.clearRecentProjects);
   const [exportOpen, setExportOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [updaterOpen, setUpdaterOpen] = useState(false);
   // Silent updater check ~5s after launch — pops the dialog if an update is
   // available, stays quiet otherwise.
@@ -88,7 +91,7 @@ export function TopBar() {
   };
 
   return (
-    <header className="h-14 shrink-0 flex items-center gap-3 px-3 bg-white border-b border-we-border">
+    <header className="h-14 shrink-0 flex items-center gap-3 px-3 bg-we-panel border-b border-we-border">
       <div className="flex items-center gap-2 pr-2">
         <div className="w-8 h-8 rounded-md bg-we-teal text-white grid place-items-center font-semibold text-sm tracking-tight">
           we
@@ -130,14 +133,15 @@ export function TopBar() {
         <MenuItem icon={Undo2}     onSelect={undo}              shortcut="Ctrl+Z">Undo</MenuItem>
         <MenuItem onSelect={onRenameProject}>Rename project…</MenuItem>
         <MenuSeparator />
-        <MenuItem icon={Keyboard}  shortcut="?">Keyboard shortcuts</MenuItem>
+        <MenuItem icon={Settings}  onSelect={() => setSettingsOpen(true)}>Settings…</MenuItem>
+        <MenuItem icon={Keyboard}  onSelect={() => setSettingsOpen(true)}>Keyboard shortcuts</MenuItem>
         <MenuItem onSelect={() => setUpdaterOpen(true)}>Check for updates…</MenuItem>
       </Menu>
 
       <button
         onClick={onRenameProject}
         title="Rename project"
-        className="text-lg font-medium text-we-ink ml-1 px-1 rounded hover:bg-slate-100"
+        className="text-lg font-medium text-we-ink ml-1 px-1 rounded hover:bg-we-hover"
       >
         {projectName}
       </button>
@@ -171,6 +175,15 @@ export function TopBar() {
             You're all caught up.
           </div>
         </Menu>
+
+        <button
+          onClick={() => setSettingsOpen(true)}
+          className="we-btn-ghost p-2"
+          title="Settings"
+          aria-label="Settings"
+        >
+          <Settings className="w-5 h-5" />
+        </button>
 
         <Menu
           align="right"
@@ -210,6 +223,7 @@ export function TopBar() {
       <button className="we-btn-primary" onClick={() => setExportOpen(true)}>Export</button>
 
       <ExportModal open={exportOpen} onClose={() => setExportOpen(false)} />
+      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <UpdaterDialog open={updaterOpen} onClose={() => setUpdaterOpen(false)} />
       <UpdaterDialog open={autoUpdaterOpen} onClose={() => setAutoUpdaterOpen(false)} silentIfUpToDate />
     </header>

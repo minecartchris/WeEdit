@@ -193,7 +193,7 @@ export function ClipBlock({ clip, pxPerSec }: ClipBlockProps) {
           ? "bg-emerald-100"
           : clip.kind === "text"
           ? "bg-amber-100"
-          : "bg-slate-200",
+          : "bg-we-hover",
       ].join(" ")}
       style={{ left, width }}
       onMouseDown={onBodyMouseDown}

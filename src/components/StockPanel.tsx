@@ -38,7 +38,7 @@ export function StockPanel({ kind }: { kind: "video" | "image" }) {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center gap-3 px-5 py-3 border-b border-we-border bg-white">
+      <div className="flex items-center gap-3 px-5 py-3 border-b border-we-border bg-we-panel">
         {kind === "video" ? (
           <Film className="w-5 h-5 text-we-teal" />
         ) : (
@@ -259,7 +259,7 @@ function VideoCard({ video }: { video: PexelsVideo }) {
 
   return (
     <div
-      className="rounded-lg border border-we-border overflow-hidden bg-white hover:shadow-md transition-shadow cursor-grab active:cursor-grabbing select-none"
+      className="rounded-lg border border-we-border overflow-hidden bg-we-panel hover:shadow-md transition-shadow cursor-grab active:cursor-grabbing select-none"
       title={`${video.user.name} · ${describeVideo(video)} — drag onto a video track`}
       onMouseDown={startDrag}
     >
@@ -372,7 +372,7 @@ function PhotoCard({ photo }: { photo: PexelsPhoto }) {
 
   return (
     <div
-      className="rounded-lg border border-we-border overflow-hidden bg-white hover:shadow-md transition-shadow cursor-grab active:cursor-grabbing select-none"
+      className="rounded-lg border border-we-border overflow-hidden bg-we-panel hover:shadow-md transition-shadow cursor-grab active:cursor-grabbing select-none"
       title={`${photo.alt || photo.photographer} — drag onto a video track`}
       onMouseDown={startDrag}
     >

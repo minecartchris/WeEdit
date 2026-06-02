@@ -214,7 +214,7 @@ function SearchView({ onOpenSettings }: { onOpenSettings: () => void }) {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center gap-3 px-5 py-3 border-b border-we-border bg-white">
+      <div className="flex items-center gap-3 px-5 py-3 border-b border-we-border bg-we-panel">
         <Music className="w-5 h-5 text-we-teal" />
         <div className="flex-1 min-w-0">
           <div className="text-sm font-medium text-we-ink">Stock audio</div>
@@ -331,7 +331,7 @@ function UrlImporter() {
   };
 
   return (
-    <div className="border-y border-we-border bg-slate-50/60 px-4 py-3">
+    <div className="border-y border-we-border bg-we-rail/60 px-4 py-3">
       <div className="flex items-center gap-2 mb-2">
         <Link2 className="w-4 h-4 text-we-teal" />
         <span className="text-xs font-medium text-we-ink">Download from URL</span>
@@ -372,7 +372,7 @@ function ActiveDownloads() {
   const entries = useMemo(() => Object.values(byUrl), [byUrl]);
   if (entries.length === 0) return null;
   return (
-    <div className="border-b border-we-border bg-white px-4 py-2 space-y-1.5">
+    <div className="border-b border-we-border bg-we-panel px-4 py-2 space-y-1.5">
       {entries.map((e) => (
         <DownloadRow key={e.id} entry={e} />
       ))}
@@ -414,7 +414,7 @@ function DownloadRow({ entry }: { entry: DownloadEntry }) {
   return (
     <div className="flex items-center gap-2 text-[11px] text-we-muted">
       <span className="truncate flex-1" title={entry.url}>{label}</span>
-      <div className="w-32 h-1.5 bg-slate-100 rounded overflow-hidden">
+      <div className="w-32 h-1.5 bg-we-hover rounded overflow-hidden">
         <div
           className={["h-full bg-we-teal transition-all", entry.status === "importing" ? "animate-pulse" : ""].join(" ")}
           style={{ width: `${pct}%` }}
@@ -518,7 +518,7 @@ function AudioRow({
 
   return (
     <li
-      className="flex items-center gap-3 px-5 py-2.5 hover:bg-slate-50 cursor-grab active:cursor-grabbing select-none"
+      className="flex items-center gap-3 px-5 py-2.5 hover:bg-we-hover cursor-grab active:cursor-grabbing select-none"
       onMouseDown={onMouseDown}
       title={`${item.title} — drag onto an audio track`}
     >
@@ -527,7 +527,7 @@ function AudioRow({
           src={item.thumbnail}
           alt=""
           draggable={false}
-          className="w-14 h-8 rounded object-cover shrink-0 bg-slate-200 pointer-events-none"
+          className="w-14 h-8 rounded object-cover shrink-0 bg-we-hover pointer-events-none"
         />
       ) : null}
 
@@ -545,7 +545,7 @@ function AudioRow({
           "w-8 h-8 rounded-full grid place-items-center shrink-0 transition-colors",
           playing
             ? "bg-we-teal text-white"
-            : "bg-slate-100 text-we-ink hover:bg-slate-200",
+            : "bg-we-hover text-we-ink hover:bg-we-hover",
         ].join(" ")}
         aria-label={
           isYoutubePreview

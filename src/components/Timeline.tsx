@@ -102,7 +102,7 @@ export function Timeline() {
   }, [totalSec, pxPerSec, fitToWindow]);
 
   return (
-    <section className="shrink-0 flex flex-col bg-white border-t border-we-border min-w-0">
+    <section className="flex flex-col min-h-0 h-full bg-we-panel border-t border-we-border min-w-0">
       <TimelineToolbar
         timecode={`${totalDisplay} / ${totalLength}`}
         pxPerSec={pxPerSec}
@@ -110,14 +110,14 @@ export function Timeline() {
         onAddTrack={addTrack}
         onFit={fitToWindow}
       />
-      {/* The single horizontal scroller for the timeline. Track headers stick
-          to the left of this scroller via `position: sticky` so they stay
-          visible during scroll. Without this overflow-x-auto the zoomed lanes
-          would push the entire app horizontally. */}
-      <div ref={scrollContainerRef} className="overflow-x-auto overflow-y-hidden">
+      {/* The single scroller for the timeline. Track headers stick to the left
+          via `position: sticky`; the ruler row sticks to the top so it stays
+          visible while scrolling tracks vertically. overflow-auto keeps zoomed
+          lanes / extra tracks contained instead of pushing the whole app. */}
+      <div ref={scrollContainerRef} className="flex-1 min-h-0 overflow-auto">
         <div className="relative" style={{ width: SCROLL_INNER_WIDTH }}>
           {/* Ruler row */}
-          <div className="flex">
+          <div className="flex sticky top-0 z-30">
             <div className="w-40 shrink-0 sticky left-0 z-30 border-r border-b border-we-border bg-we-trackHead h-7" />
             <div ref={rulerRef} onMouseDown={onRulerMouseDown} className="flex-1 cursor-ew-resize">
               <Ruler totalSec={totalSec} pxPerSec={pxPerSec} playheadSec={playheadSec} />
@@ -164,7 +164,7 @@ function TimelineToolbar({
         trigger={({ onClick }) => (
           <button
             onClick={onClick}
-            className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-sm text-we-ink hover:bg-slate-100"
+            className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-sm text-we-ink hover:bg-we-hover"
           >
             <Plus className="w-4 h-4 text-we-teal" />
             Track
@@ -373,7 +373,7 @@ function TrackMuteRow({
   return (
     <button
       onClick={onToggle}
-      className="flex items-center gap-2 px-2 py-1 rounded text-xs hover:bg-slate-100 text-left"
+      className="flex items-center gap-2 px-2 py-1 rounded text-xs hover:bg-we-hover text-left"
     >
       {muted ? (
         <VolumeX className="w-4 h-4 text-we-muted" />
@@ -617,7 +617,7 @@ function Ruler({
   for (let s = 0; s <= totalSec; s += major) ticks.push(s);
 
   return (
-    <div className="relative h-7 overflow-hidden bg-white border-b border-we-border">
+    <div className="relative h-7 overflow-hidden bg-we-panel border-b border-we-border">
       <div className="relative h-full" style={{ width: totalSec * pxPerSec }}>
         {ticks.map((s) => (
           <div
@@ -685,7 +685,7 @@ function TrackRow({
       <div
         className={[
           "relative flex-1 transition-colors",
-          visualCompatibility === "compatible" && isHovered ? "bg-we-teal/15 ring-1 ring-inset ring-we-teal/60" : "bg-slate-50/40",
+          visualCompatibility === "compatible" && isHovered ? "bg-we-teal/15 ring-1 ring-inset ring-we-teal/60" : "bg-we-rail/40",
           visualCompatibility === "incompatible" && isHovered ? "bg-red-100/40" : "",
         ].join(" ")}
         style={{ minWidth: totalSec * pxPerSec }}

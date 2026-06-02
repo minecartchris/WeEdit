@@ -88,7 +88,7 @@ function ConnectionList({
           {connections.map((c) => (
             <li
               key={c.id}
-              className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 cursor-pointer"
+              className="flex items-center gap-3 px-4 py-3 hover:bg-we-hover cursor-pointer"
               onClick={() => onPick(c)}
             >
               <HardDrive className="w-5 h-5 text-we-muted" />
@@ -299,7 +299,7 @@ function BrowseShare({ conn, onBack }: { conn: NasConnection; onBack: () => void
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center gap-2 px-5 py-2 border-b border-we-border bg-white">
+      <div className="flex items-center gap-2 px-5 py-2 border-b border-we-border bg-we-panel">
         <button onClick={onBack} className="we-btn-ghost p-1" title="Back to connections">
           <ArrowLeft className="w-4 h-4" />
         </button>
@@ -332,7 +332,7 @@ function BrowseShare({ conn, onBack }: { conn: NasConnection; onBack: () => void
         {subpath && (
           <button
             onClick={goUp}
-            className="w-full flex items-center gap-3 px-5 py-2 hover:bg-slate-50 text-sm text-we-muted border-b border-we-border"
+            className="w-full flex items-center gap-3 px-5 py-2 hover:bg-we-hover text-sm text-we-muted border-b border-we-border"
           >
             <ArrowLeft className="w-4 h-4" />
             <span>Up one folder</span>
@@ -361,7 +361,7 @@ function BrowseShare({ conn, onBack }: { conn: NasConnection; onBack: () => void
                   key={e.path}
                   className={[
                     "flex items-center gap-3 px-5 py-2 text-sm select-none",
-                    supported ? "hover:bg-slate-50" : "opacity-50",
+                    supported ? "hover:bg-we-hover" : "opacity-50",
                     e.isDirectory ? "cursor-pointer" : kind ? "cursor-grab active:cursor-grabbing" : "",
                   ].join(" ")}
                   title={

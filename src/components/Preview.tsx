@@ -45,20 +45,20 @@ export function Preview() {
   };
 
   return (
-    <section className="flex-1 min-w-0 flex flex-col bg-white">
+    <section className="flex-1 min-w-0 flex flex-col bg-we-panel">
       <div className="flex-1 min-h-0 grid place-items-center bg-we-stage relative overflow-hidden">
         <PreviewStage aspect={aspect} />
       </div>
 
       <PlayheadProgress />
 
-      <div className="h-12 shrink-0 flex items-center px-3 border-t border-we-border bg-white">
+      <div className="h-12 shrink-0 flex items-center px-3 border-t border-we-border bg-we-panel">
         <Menu
           dropUp
           trigger={({ onClick }) => (
             <button
               onClick={onClick}
-              className="inline-flex items-center gap-1 px-2 py-1 rounded text-sm text-we-ink hover:bg-slate-100"
+              className="inline-flex items-center gap-1 px-2 py-1 rounded text-sm text-we-ink hover:bg-we-hover"
               title="Aspect ratio"
             >
               <span className="inline-block w-4 h-3 rounded-sm border border-we-muted" />
@@ -119,7 +119,7 @@ function PlayheadProgress() {
   });
   const pct = totalDur > 0 ? Math.min(100, (playheadSec / totalDur) * 100) : 0;
   return (
-    <div className="h-1.5 bg-slate-100 relative">
+    <div className="h-1.5 bg-we-hover relative">
       <div className="absolute inset-y-0 left-0 bg-we-teal" style={{ width: `${pct}%` }} />
     </div>
   );

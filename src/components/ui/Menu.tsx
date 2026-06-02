@@ -127,7 +127,7 @@ export function Menu({ trigger, children, align = "left", dropUp = false }: Menu
             <div
               ref={panelRef}
               role="menu"
-              className="fixed z-[1000] min-w-[200px] max-w-[360px] rounded-md bg-white border border-we-border shadow-lg py-1"
+              className="fixed z-[1000] min-w-[200px] max-w-[360px] rounded-md bg-we-panel border border-we-border shadow-lg py-1"
               style={{
                 top: pos.ready ? pos.top : -9999,
                 left: pos.ready ? pos.left : -9999,
@@ -169,7 +169,7 @@ export function MenuItem({ children, onSelect, icon: Icon, danger, disabled, sho
           ? "text-we-muted/60 cursor-not-allowed"
           : danger
           ? "text-red-600 hover:bg-red-50"
-          : "text-we-ink hover:bg-slate-100",
+          : "text-we-ink hover:bg-we-hover",
       ].join(" ")}
     >
       {Icon ? <Icon className="w-4 h-4" /> : <span className="w-4" />}

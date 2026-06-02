@@ -1,21 +1,25 @@
 /** @type {import('tailwindcss').Config} */
 export default {
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
+  darkMode: "class",
   theme: {
     extend: {
       colors: {
-        // Approximated from WeVideo screenshots — refine as we iterate.
+        // Semantic tokens backed by CSS variables defined in styles.css (light
+        // on :root, overridden under .dark). Channels are space-separated RGB so
+        // Tailwind opacity modifiers like `bg-we-teal/10` still work.
         we: {
-          teal: "#1aa6b7",          // accent / primary buttons & timeline highlights
-          tealHover: "#168a99",
-          ink: "#1f2937",            // primary text
-          muted: "#6b7280",          // secondary text
-          panel: "#ffffff",          // editor panels
-          rail: "#f9fafb",           // sidebar background
-          border: "#e5e7eb",
-          timeline: "#0f172a",       // timeline ruler / dark accents
-          trackHead: "#f3f4f6",
-          stage: "#000000",          // preview stage background
+          teal: "rgb(var(--we-teal) / <alpha-value>)",        // accent / primary
+          tealHover: "rgb(var(--we-teal-hover) / <alpha-value>)",
+          ink: "rgb(var(--we-ink) / <alpha-value>)",          // primary text
+          muted: "rgb(var(--we-muted) / <alpha-value>)",      // secondary text
+          panel: "rgb(var(--we-panel) / <alpha-value>)",      // editor panels
+          rail: "rgb(var(--we-rail) / <alpha-value>)",        // sidebar background
+          border: "rgb(var(--we-border) / <alpha-value>)",
+          hover: "rgb(var(--we-hover) / <alpha-value>)",      // button hover bg
+          timeline: "rgb(var(--we-timeline) / <alpha-value>)",
+          trackHead: "rgb(var(--we-trackHead) / <alpha-value>)",
+          stage: "rgb(var(--we-stage) / <alpha-value>)",
         },
       },
       fontFamily: {

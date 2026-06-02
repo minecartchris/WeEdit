@@ -96,7 +96,7 @@ function SetupForm({ onSave }: { onSave: (clientId: string) => void | Promise<vo
           </li>
           <li>Name it anything (e.g. "WeEdit local"). Category: <em>Application Integration</em>.</li>
           <li>
-            For OAuth Redirect URL, enter <code className="bg-slate-100 px-1 rounded">http://localhost</code>{" "}
+            For OAuth Redirect URL, enter <code className="bg-we-hover px-1 rounded">http://localhost</code>{" "}
             (it isn't used here, but Twitch requires the field).
           </li>
           <li>Copy the <strong>Client ID</strong> and paste it below.</li>
@@ -216,7 +216,7 @@ function DeviceFlow({
         the approval automatically.
       </p>
 
-      <div className="rounded-lg border border-we-border bg-slate-50 p-5 space-y-3 text-center">
+      <div className="rounded-lg border border-we-border bg-we-rail p-5 space-y-3 text-center">
         <div className="text-xs uppercase tracking-wide text-we-muted">Your code</div>
         <div className="font-mono text-3xl font-semibold tabular-nums text-we-ink select-text">
           {code.user_code}
@@ -336,7 +336,7 @@ function VodList({ twitch, onLogout }: { twitch: TwitchConfig; onLogout: () => v
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center gap-3 px-5 py-3 border-b border-we-border bg-white">
+      <div className="flex items-center gap-3 px-5 py-3 border-b border-we-border bg-we-panel">
         {twitch.profileImageUrl && (
           <img src={twitch.profileImageUrl} alt="" className="w-8 h-8 rounded-full" />
         )}
@@ -465,7 +465,7 @@ function VodCard({ video }: { video: TwitchVideo }) {
   };
 
   return (
-    <div className="rounded-lg border border-we-border overflow-hidden bg-white hover:shadow-md transition-shadow flex flex-col">
+    <div className="rounded-lg border border-we-border overflow-hidden bg-we-panel hover:shadow-md transition-shadow flex flex-col">
       <div className="aspect-video bg-slate-900 relative overflow-hidden">
         <img
           src={thumbnailUrl(video.thumbnail_url, 480, 270)}
@@ -527,7 +527,7 @@ function DownloadStatus({ entry, onDismiss }: { entry: DownloadEntry; onDismiss:
         </div>
         {!entry.error?.includes("install") ? null : (
           <div className="pt-1 text-red-600">
-            Run <code className="bg-white/60 px-1 rounded">winget install yt-dlp</code> in PowerShell, then retry.
+            Run <code className="bg-we-panel/60 px-1 rounded">winget install yt-dlp</code> in PowerShell, then retry.
           </div>
         )}
       </div>
@@ -558,7 +558,7 @@ function DownloadStatus({ entry, onDismiss }: { entry: DownloadEntry; onDismiss:
   return (
     <div className="mt-auto space-y-1.5">
       <div className="text-[11px] text-we-muted truncate">{label}</div>
-      <div className="h-1.5 bg-slate-100 rounded overflow-hidden">
+      <div className="h-1.5 bg-we-hover rounded overflow-hidden">
         <div
           className={["h-full bg-we-teal transition-all", isImporting ? "animate-pulse" : ""].join(" ")}
           style={{ width: `${pct}%` }}

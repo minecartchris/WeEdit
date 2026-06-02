@@ -117,49 +117,49 @@ export function MediaLibrary() {
   // Source-style tabs render full-panel content, not the standard library grid.
   if (tab === "twitch") {
     return (
-      <section className="flex-1 min-w-0 bg-white border-r border-we-border flex flex-col">
+      <section className="flex-1 min-w-0 bg-we-panel border-r border-we-border flex flex-col">
         <TwitchPanel />
       </section>
     );
   }
   if (tab === "nas") {
     return (
-      <section className="flex-1 min-w-0 bg-white border-r border-we-border flex flex-col">
+      <section className="flex-1 min-w-0 bg-we-panel border-r border-we-border flex flex-col">
         <NasPanel />
       </section>
     );
   }
   if (tab === "videos") {
     return (
-      <section className="flex-1 min-w-0 bg-white border-r border-we-border flex flex-col">
+      <section className="flex-1 min-w-0 bg-we-panel border-r border-we-border flex flex-col">
         <StockPanel kind="video" />
       </section>
     );
   }
   if (tab === "images") {
     return (
-      <section className="flex-1 min-w-0 bg-white border-r border-we-border flex flex-col">
+      <section className="flex-1 min-w-0 bg-we-panel border-r border-we-border flex flex-col">
         <StockPanel kind="image" />
       </section>
     );
   }
   if (tab === "audio") {
     return (
-      <section className="flex-1 min-w-0 bg-white border-r border-we-border flex flex-col">
+      <section className="flex-1 min-w-0 bg-we-panel border-r border-we-border flex flex-col">
         <AudioPanel />
       </section>
     );
   }
   if (tab === "text") {
     return (
-      <section className="flex-1 min-w-0 bg-white border-r border-we-border flex flex-col">
+      <section className="flex-1 min-w-0 bg-we-panel border-r border-we-border flex flex-col">
         <TextPanel />
       </section>
     );
   }
 
   return (
-    <section className="flex-1 min-w-0 bg-white border-r border-we-border flex flex-col">
+    <section className="flex-1 min-w-0 bg-we-panel border-r border-we-border flex flex-col">
       <div className="h-12 shrink-0 flex items-center gap-4 px-4 border-b border-we-border">
         <Menu
           trigger={({ onClick }) => (
@@ -201,12 +201,12 @@ export function MediaLibrary() {
             onClick={() => setHideUsed((v) => !v)}
             className={[
               "relative w-9 h-5 rounded-full transition-colors",
-              hideUsed ? "bg-we-teal" : "bg-slate-300",
+              hideUsed ? "bg-we-teal" : "bg-we-border",
             ].join(" ")}
           >
             <span
               className={[
-                "absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all",
+                "absolute top-0.5 w-4 h-4 rounded-full bg-we-panel shadow transition-all",
                 hideUsed ? "left-[18px]" : "left-0.5",
               ].join(" ")}
             />
@@ -279,7 +279,7 @@ function MediaCard({ item }: { item: MediaItem }) {
 
   return (
     <div
-      className="group select-none rounded-lg border border-we-border overflow-hidden bg-white hover:shadow-md transition-shadow cursor-grab active:cursor-grabbing"
+      className="group select-none rounded-lg border border-we-border overflow-hidden bg-we-panel hover:shadow-md transition-shadow cursor-grab active:cursor-grabbing"
       title={`${item.name} — drag to a track, or double-click to add at playhead`}
       onMouseDown={(e) => startMediaDrag(e, item)}
       onDoubleClick={addToTimeline}
@@ -319,7 +319,7 @@ function MediaCard({ item }: { item: MediaItem }) {
 
 function KindIcon({ kind }: { kind: MediaItem["kind"] }) {
   const Icon = kind === "video" ? Film : kind === "audio" ? Music : ImageIcon;
-  return <Icon className="w-8 h-8 text-slate-500" />;
+  return <Icon className="w-8 h-8 text-we-muted" />;
 }
 
 function StubPanel({ title, hint, icon: Icon }: { title: string; hint: string; icon?: LucideIconLike }) {
@@ -343,7 +343,7 @@ function EmptyDropzone({ dragOver, onClick }: { dragOver: boolean; onClick: () =
         "w-full h-full min-h-[260px] rounded-lg border-2 border-dashed grid place-items-center transition-colors",
         dragOver
           ? "border-we-teal bg-we-teal/5 text-we-teal"
-          : "border-slate-300 text-we-muted hover:border-we-teal/60 hover:text-we-teal",
+          : "border-we-border text-we-muted hover:border-we-teal/60 hover:text-we-teal",
       ].join(" ")}
     >
       <div className="flex flex-col items-center gap-3">

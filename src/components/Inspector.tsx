@@ -200,7 +200,7 @@ function MediaProps({ clip }: { clip: MediaClip }) {
           onChange={(v) => updateClip(clip.id, { volume: v / 100 })}
         />
       )}
-      {media?.audioTracks && media.audioTracks.length > 1 && (
+      {media?.audioTracks && media.audioTracks.length >= 1 && (
         <div className="flex flex-col gap-1.5">
           <SectionTitle>Audio tracks ({media.audioTracks.length})</SectionTitle>
           {media.audioTracks.map((t) => (

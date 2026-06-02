@@ -8,6 +8,7 @@ import {
   SkipBack,
   SkipForward,
 } from "lucide-react";
+import { useRef } from "react";
 import { PreviewStage } from "@/components/PreviewStage";
 import { Menu, MenuItem, MenuLabel } from "@/components/ui/Menu";
 import { useEditor } from "@/state/editor";
@@ -23,6 +24,18 @@ export function Preview() {
   const aspect = useEditor((s) => s.project.aspectRatio);
   const setAspect = useEditor((s) => s.setProjectAspect);
   const setPlayhead = useEditor((s) => s.setPlayhead);
+
+  // Fullscreen the stage area (the video, not the whole editor chrome).
+  const stageAreaRef = useRef<HTMLDivElement>(null);
+  const toggleFullscreen = () => {
+    if (document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => {});
+    } else {
+      void stageAreaRef.current?.requestFullscreen().catch((err) => {
+        console.error("Fullscreen failed:", err);
+      });
+    }
+  };
 
   // SkipBack/SkipForward used to step a single frame, which was too tiny to
   // be useful. Now jump 5 seconds; arrow keys still step one frame for fine
@@ -46,7 +59,10 @@ export function Preview() {
 
   return (
     <section className="flex-1 min-w-0 flex flex-col bg-we-panel">
-      <div className="flex-1 min-h-0 grid place-items-center bg-we-stage relative overflow-hidden">
+      <div
+        ref={stageAreaRef}
+        className="flex-1 min-h-0 grid place-items-center bg-we-stage relative overflow-hidden"
+      >
         <PreviewStage aspect={aspect} />
       </div>
 
@@ -98,7 +114,7 @@ export function Preview() {
           </button>
         </div>
 
-        <button className="we-btn-ghost p-2" title="Fullscreen">
+        <button onClick={toggleFullscreen} className="we-btn-ghost p-2" title="Fullscreen">
           <Maximize className="w-5 h-5" />
         </button>
       </div>

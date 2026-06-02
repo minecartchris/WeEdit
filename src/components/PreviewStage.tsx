@@ -23,26 +23,34 @@ export function PreviewStage({ aspect }: Props) {
   const clips = useEditor((s) => s.clips);
   const media = useEditor((s) => s.media);
 
-  const activeVideo: MediaClip | null = useMemo(() => {
-    const ranked = [...tracks]
+  // All visible (video/image) clips active at the playhead, one per video
+  // track, ordered back-to-front by zIndex. Rendering every layer (not just the
+  // topmost) lets a clip's opacity reveal the layers beneath it instead of black.
+  const activeVisuals = useMemo(() => {
+    const ascending = [...tracks]
       .filter((t) => t.kind === "video")
-      .sort((a, b) => b.zIndex - a.zIndex);
-    for (const track of ranked) {
+      .sort((a, b) => a.zIndex - b.zIndex);
+    const out: { clip: MediaClip; media: MediaItem; volume: number }[] = [];
+    for (const track of ascending) {
       for (const cid of track.clipIds) {
         const c = clips[cid];
         if (!c || c.kind === "text") continue;
         if (c.startSec <= playheadSec && playheadSec < c.startSec + c.durationSec) {
-          return c as MediaClip;
+          const m = media.find((mm) => mm.id === (c as MediaClip).mediaId);
+          if (m) {
+            const mc = c as MediaClip;
+            out.push({
+              clip: mc,
+              media: m,
+              volume: track.muted ? 0 : clamp01(mc.volume * track.volume),
+            });
+          }
+          break; // clips can't overlap on a single track
         }
       }
     }
-    return null;
-  }, [tracks, clips, playheadSec]);
-
-  const activeMedia: MediaItem | null = useMemo(
-    () => (activeVideo ? media.find((m) => m.id === activeVideo.mediaId) ?? null : null),
-    [activeVideo, media],
-  );
+    return out;
+  }, [tracks, clips, media, playheadSec]);
 
   const activeTexts: TextClip[] = useMemo(() => {
     const out: TextClip[] = [];
@@ -60,28 +68,25 @@ export function PreviewStage({ aspect }: Props) {
     [tracks, clips, media, playheadSec],
   );
 
-  const videoVolume = useMemo(() => {
-    if (!activeVideo) return 0;
-    const track = tracks.find((t) => t.id === activeVideo.trackId);
-    if (!track) return 0;
-    if (track.muted) return 0;
-    return clamp01(activeVideo.volume * track.volume);
-  }, [activeVideo, tracks]);
+  const isEmpty = activeVisuals.length === 0 && activeTexts.length === 0;
 
   return (
     <StageFrame aspect={aspect}>
-      {activeMedia?.kind === "video" && activeVideo ? (
-        <VideoLayer
-          media={activeMedia}
-          clip={activeVideo}
-          playheadSec={playheadSec}
-          isPlaying={isPlaying}
-          volume={videoVolume}
-        />
-      ) : activeMedia?.kind === "image" && activeVideo ? (
-        <ImageLayer media={activeMedia} clip={activeVideo} playheadSec={playheadSec} />
-      ) : (
-        <EmptyStage />
+      {isEmpty && <EmptyStage />}
+
+      {activeVisuals.map(({ clip, media: m, volume }) =>
+        m.kind === "video" ? (
+          <VideoLayer
+            key={clip.id}
+            media={m}
+            clip={clip}
+            playheadSec={playheadSec}
+            isPlaying={isPlaying}
+            volume={volume}
+          />
+        ) : (
+          <ImageLayer key={clip.id} media={m} clip={clip} playheadSec={playheadSec} />
+        ),
       )}
 
       {activeTexts.map((t) => (

@@ -105,6 +105,8 @@ interface EditorState {
   updateClip: (id: string, patch: Partial<Clip>) => void;
   splitAtPlayhead: () => void;
   deleteSelected: () => void;
+  /** Split a video clip's audio onto a new audio track and mute the video. */
+  detachAudio: (clipId: string) => void;
 
   // ── Drag session (library → timeline)
   beginDragSession: (mediaId: string, kind: MediaItem["kind"]) => void;
@@ -397,6 +399,49 @@ export const useEditor = create<EditorState>((set, get) => ({
           clipIds: t.clipIds.filter((cid) => !removed.has(cid)),
         })),
         selectedClipIds: [],
+      });
+    }),
+
+  detachAudio: (clipId) =>
+    set((s) => {
+      const clip = s.clips[clipId];
+      if (!clip || clip.kind !== "video") return s;
+      // Put the detached audio on its own new audio track so it can never
+      // collide with existing audio clips, and the user can move it freely.
+      const trackId = `track-audio-${crypto.randomUUID().slice(0, 8)}`;
+      const audioClipId = crypto.randomUUID();
+      const audioClip: Clip = {
+        id: audioClipId,
+        trackId,
+        startSec: clip.startSec,
+        durationSec: clip.durationSec,
+        sourceInSec: clip.sourceInSec,
+        kind: "audio",
+        mediaId: clip.mediaId,
+        opacity: 1,
+        volume: clip.volume > 0 ? clip.volume : 1,
+        xPct: 50,
+        yPct: 50,
+        scale: 1,
+      };
+      const newTrack: Track = {
+        id: trackId,
+        kind: "audio",
+        name: nextTrackName(s.tracks, "audio"),
+        volume: 1,
+        muted: false,
+        zIndex: nextZIndex(s.tracks, "audio"),
+        clipIds: [audioClipId],
+      };
+      return withHistory(s, {
+        tracks: [...s.tracks, newTrack],
+        clips: {
+          ...s.clips,
+          [audioClipId]: audioClip,
+          // Mute the source video's audio — its sound now lives on the new track.
+          [clipId]: { ...clip, volume: 0 } as Clip,
+        },
+        selectedClipIds: [audioClipId],
       });
     }),
 

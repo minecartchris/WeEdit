@@ -1,4 +1,4 @@
-import { MoreHorizontal, Music, Pencil, Scissors, Trash2 } from "lucide-react";
+import { AudioLines, Music, Pencil, Scissors, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ContextMenu, ContextMenuItem } from "@/components/ui/ContextMenu";
 import {
@@ -26,6 +26,7 @@ export function ClipBlock({ clip, pxPerSec }: ClipBlockProps) {
   const updateClip = useEditor((s) => s.updateClip);
   const pushHistory = useEditor((s) => s.pushHistory);
   const removeClip = useEditor((s) => s.removeClip);
+  const detachAudio = useEditor((s) => s.detachAudio);
   const splitAtPlayhead = useEditor((s) => s.splitAtPlayhead);
   const setPlayhead = useEditor((s) => s.setPlayhead);
   const media = useEditor((s) => s.media);
@@ -188,7 +189,7 @@ export function ClipBlock({ clip, pxPerSec }: ClipBlockProps) {
     <div
       className={[
         "absolute top-1 bottom-1 rounded-md overflow-hidden flex select-none",
-        isSelected ? "ring-2 ring-we-teal z-10" : "ring-1 ring-slate-300/80",
+        isSelected ? "ring-2 ring-we-teal z-10" : "ring-1 ring-we-border",
         clip.kind === "audio"
           ? "bg-emerald-100"
           : clip.kind === "text"
@@ -245,9 +246,11 @@ export function ClipBlock({ clip, pxPerSec }: ClipBlockProps) {
           >
             Split at playhead
           </ContextMenuItem>
-          <ContextMenuItem icon={MoreHorizontal} onSelect={() => selectClip(clip.id)} disabled>
-            Properties (toolbar)
-          </ContextMenuItem>
+          {clip.kind === "video" && (
+            <ContextMenuItem icon={AudioLines} onSelect={() => detachAudio(clip.id)}>
+              Detach audio
+            </ContextMenuItem>
+          )}
           <ContextMenuItem icon={Trash2} danger onSelect={() => removeClip(clip.id)} shortcut="Del">
             Delete clip
           </ContextMenuItem>

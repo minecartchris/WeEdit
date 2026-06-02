@@ -1,5 +1,7 @@
-import { Monitor, Moon, Sun } from "lucide-react";
+import { Monitor, Moon, RotateCcw, Sun } from "lucide-react";
+import { useEffect, useState } from "react";
 import { Modal } from "@/components/ui/Modal";
+import { SHORTCUT_COMMANDS, eventToCombo, formatCombo } from "@/lib/shortcuts";
 import { usePrefs } from "@/state/prefs";
 import type { PositionUnit, ThemeMode } from "@/types";
 
@@ -17,6 +19,7 @@ export function SettingsModal({ open, onClose }: Props) {
       <div className="p-5 flex flex-col gap-7">
         <AppearanceSection />
         <EditorSection />
+        <ShortcutsSection />
       </div>
     </Modal>
   );
@@ -67,6 +70,73 @@ function AppearanceSection() {
           );
         })}
       </div>
+    </Section>
+  );
+}
+
+function ShortcutsSection() {
+  const customShortcuts = usePrefs((s) => s.customShortcuts);
+  const setShortcut = usePrefs((s) => s.setShortcut);
+  const resetShortcuts = usePrefs((s) => s.resetShortcuts);
+  const [recordingId, setRecordingId] = useState<string | null>(null);
+
+  // While recording, the next key press (other than Escape) becomes the binding.
+  useEffect(() => {
+    if (!recordingId) return;
+    const onKey = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === "Escape") {
+        setRecordingId(null);
+        return;
+      }
+      const combo = eventToCombo(e);
+      if (!combo) return; // lone modifier — keep waiting
+      setShortcut(recordingId, combo);
+      setRecordingId(null);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [recordingId, setShortcut]);
+
+  return (
+    <Section title="Keyboard shortcuts" hint="Click a shortcut to record a new key, or reset to defaults.">
+      <div className="flex flex-col divide-y divide-we-border rounded-lg border border-we-border overflow-hidden">
+        {SHORTCUT_COMMANDS.map((cmd) => {
+          const binding = customShortcuts[cmd.id] ?? cmd.defaultBinding;
+          const recording = recordingId === cmd.id;
+          const overridden = customShortcuts[cmd.id] != null;
+          return (
+            <div key={cmd.id} className="flex items-center gap-2 px-3 py-2">
+              <span className="flex-1 text-sm text-we-ink">{cmd.label}</span>
+              {overridden && !recording && (
+                <button
+                  onClick={() => setShortcut(cmd.id, null)}
+                  className="text-we-muted hover:text-we-ink p-1"
+                  title="Reset to default"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                </button>
+              )}
+              <button
+                onClick={() => setRecordingId(recording ? null : cmd.id)}
+                className={[
+                  "min-w-[96px] text-center text-xs font-mono rounded px-2 py-1 border transition-colors",
+                  recording
+                    ? "border-we-teal bg-we-teal/10 text-we-teal animate-pulse"
+                    : "border-we-border text-we-ink hover:bg-we-hover",
+                ].join(" ")}
+              >
+                {recording ? "Press keys…" : formatCombo(binding)}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      <button onClick={resetShortcuts} className="we-btn-ghost self-start text-xs">
+        <RotateCcw className="w-3.5 h-3.5" />
+        Reset all to defaults
+      </button>
     </Section>
   );
 }

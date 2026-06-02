@@ -1,66 +1,31 @@
 import { useEffect } from "react";
-import { newProject, openProject, saveProject } from "@/lib/project";
-import { useEditor } from "@/state/editor";
+import { SHORTCUT_ALIASES, SHORTCUT_COMMANDS, eventToCombo } from "@/lib/shortcuts";
+import { usePrefs } from "@/state/prefs";
 
-// Global keyboard shortcuts. We bypass them when the user is typing in an
-// input / textarea / contenteditable so things like the rename prompt aren't
-// hijacked.
+// Global keyboard shortcuts, driven by the command registry + per-user overrides
+// from prefs. We bypass them when the user is typing in an input / textarea /
+// contenteditable so things like the rename prompt aren't hijacked.
 export function useShortcuts() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (isTypingTarget(e.target)) return;
-      const { undo, redo, deleteSelected, splitAtPlayhead, togglePlay } =
-        useEditor.getState();
-      const ctrl = e.ctrlKey || e.metaKey;
+      const combo = eventToCombo(e);
+      if (!combo) return;
 
-      if (ctrl && (e.key === "z" || e.key === "Z") && !e.shiftKey) {
-        e.preventDefault();
-        undo();
-      } else if (
-        (ctrl && e.shiftKey && (e.key === "z" || e.key === "Z")) ||
-        (ctrl && (e.key === "y" || e.key === "Y"))
-      ) {
-        e.preventDefault();
-        redo();
-      } else if (ctrl && (e.key === "s" || e.key === "S")) {
-        e.preventDefault();
-        void saveProject().catch((err) => console.error("Save failed:", err));
-      } else if (ctrl && (e.key === "o" || e.key === "O")) {
-        e.preventDefault();
-        void openProject().catch((err) => console.error("Open failed:", err));
-      } else if (ctrl && (e.key === "n" || e.key === "N")) {
-        e.preventDefault();
-        newProject();
-      } else if (e.key === "Delete" || e.key === "Backspace") {
-        e.preventDefault();
-        deleteSelected();
-      } else if (e.key === " ") {
-        e.preventDefault();
-        togglePlay();
-      } else if ((e.key === "s" || e.key === "S") && !ctrl) {
-        e.preventDefault();
-        splitAtPlayhead();
-      } else if (e.key === "Home") {
-        e.preventDefault();
-        useEditor.getState().setPlayhead(0);
-      } else if (e.key === "End") {
-        e.preventDefault();
-        const { clips } = useEditor.getState();
-        let max = 0;
-        for (const c of Object.values(clips)) {
-          const end = c.startSec + c.durationSec;
-          if (end > max) max = end;
-        }
-        useEditor.getState().setPlayhead(max);
-      } else if (e.key === "ArrowLeft" && !ctrl) {
-        e.preventDefault();
-        const { playheadSec, project } = useEditor.getState();
-        useEditor.getState().setPlayhead(playheadSec - 1 / project.fps);
-      } else if (e.key === "ArrowRight" && !ctrl) {
-        e.preventDefault();
-        const { playheadSec, project } = useEditor.getState();
-        useEditor.getState().setPlayhead(playheadSec + 1 / project.fps);
+      const custom = usePrefs.getState().customShortcuts;
+      let matched = SHORTCUT_COMMANDS.find(
+        (cmd) => (custom[cmd.id] ?? cmd.defaultBinding) === combo,
+      );
+      // Fall back to built-in aliases (e.g. Backspace = Delete) only if nothing
+      // matched the effective bindings.
+      if (!matched) {
+        const aliasId = SHORTCUT_ALIASES[combo];
+        if (aliasId) matched = SHORTCUT_COMMANDS.find((c) => c.id === aliasId);
       }
+      if (!matched) return;
+
+      e.preventDefault();
+      matched.run();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

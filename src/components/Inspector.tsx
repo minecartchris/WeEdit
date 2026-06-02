@@ -1,4 +1,4 @@
-import { MousePointerSquareDashed, SlidersHorizontal, Volume2, VolumeX } from "lucide-react";
+import { AudioLines, MousePointerSquareDashed, SlidersHorizontal, Volume2, VolumeX } from "lucide-react";
 import { NumberField } from "@/components/ui/NumberField";
 import { MAX_SCALE, MIN_SCALE, TEXT_CHAR_LIMIT, pctToPx, pxToPct } from "@/lib/clips";
 import { useEditor } from "@/state/editor";
@@ -120,6 +120,7 @@ function MediaProps({ clip }: { clip: MediaClip }) {
   const updateClip = useEditor((s) => s.updateClip);
   const pushHistory = useEditor((s) => s.pushHistory);
   const setMediaAudioTrackMuted = useEditor((s) => s.setMediaAudioTrackMuted);
+  const detachAudio = useEditor((s) => s.detachAudio);
   const media = useEditor((s) => s.media.find((m) => m.id === clip.mediaId) ?? null);
 
   return (
@@ -162,6 +163,16 @@ function MediaProps({ clip }: { clip: MediaClip }) {
             Per-track mute applies to all clips using this media.
           </div>
         </div>
+      )}
+      {clip.kind === "video" && (
+        <button
+          onClick={() => detachAudio(clip.id)}
+          className="we-btn justify-center border border-we-border mt-1"
+          title="Split this clip's audio onto its own audio track"
+        >
+          <AudioLines className="w-4 h-4 text-we-teal" />
+          Detach audio
+        </button>
       )}
     </section>
   );

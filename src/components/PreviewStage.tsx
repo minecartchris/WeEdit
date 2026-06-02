@@ -1,6 +1,6 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { MAX_SCALE, MIN_SCALE } from "@/lib/clips";
+import { MAX_SCALE, MIN_SCALE, resolveTransform } from "@/lib/clips";
 import { useEditor } from "@/state/editor";
 import type { AspectRatio, Clip, MediaClip, MediaItem, TextClip } from "@/types";
 
@@ -79,13 +79,13 @@ export function PreviewStage({ aspect }: Props) {
           volume={videoVolume}
         />
       ) : activeMedia?.kind === "image" && activeVideo ? (
-        <ImageLayer media={activeMedia} clip={activeVideo} />
+        <ImageLayer media={activeMedia} clip={activeVideo} playheadSec={playheadSec} />
       ) : (
         <EmptyStage />
       )}
 
       {activeTexts.map((t) => (
-        <TextLayer key={t.id} clip={t} />
+        <TextLayer key={t.id} clip={t} playheadSec={playheadSec} />
       ))}
 
       {activeAudios.map((a) => (
@@ -155,7 +155,7 @@ function VideoLayer({
 
   return (
     <>
-      <div data-cliplayer={clip.id} style={transformStyle(clip)}>
+      <div data-cliplayer={clip.id} style={transformStyle(resolveTransform(clip, playheadSec))}>
         <video
           ref={ref}
           src={convertFileSrc(media.src)}
@@ -238,9 +238,9 @@ function ExtractedAudioTrack({
   );
 }
 
-function ImageLayer({ media, clip }: { media: MediaItem; clip: MediaClip }) {
+function ImageLayer({ media, clip, playheadSec }: { media: MediaItem; clip: MediaClip; playheadSec: number }) {
   return (
-    <div data-cliplayer={clip.id} style={transformStyle(clip)}>
+    <div data-cliplayer={clip.id} style={transformStyle(resolveTransform(clip, playheadSec))}>
       <img
         src={convertFileSrc(media.src)}
         alt=""
@@ -251,15 +251,16 @@ function ImageLayer({ media, clip }: { media: MediaItem; clip: MediaClip }) {
   );
 }
 
-function TextLayer({ clip }: { clip: TextClip }) {
+function TextLayer({ clip, playheadSec }: { clip: TextClip; playheadSec: number }) {
+  const tf = resolveTransform(clip, playheadSec);
   return (
     <div
       data-cliplayer={clip.id}
       className="absolute whitespace-pre-wrap text-center"
       style={{
-        left: `${clip.xPct}%`,
-        top: `${clip.yPct}%`,
-        transform: `translate(-50%, -50%) scale(${clip.scale})`,
+        left: `${tf.xPct}%`,
+        top: `${tf.yPct}%`,
+        transform: `translate(-50%, -50%) scale(${tf.scale})`,
         transformOrigin: "center",
         fontFamily: clip.fontFamily,
         fontSize: `${clip.fontSizePx}px`,
@@ -363,15 +364,17 @@ function StageInteraction({ stageRef }: { stageRef: React.RefObject<HTMLDivEleme
     if (s.selectedClipIds.length !== 1) return null;
     return s.clips[s.selectedClipIds[0]] ?? null;
   });
-  const updateClip = useEditor((s) => s.updateClip);
+  const playheadSec = useEditor((s) => s.playheadSec);
+  const setTransformAtPlayhead = useEditor((s) => s.setTransformAtPlayhead);
   const pushHistory = useEditor((s) => s.pushHistory);
 
   const [box, setBox] = useState<Box | null>(null);
 
-  // Re-measure whenever the clip (transform/text) changes or the stage resizes.
+  // Re-measure whenever the clip (transform/text) changes, the playhead moves
+  // (keyframed clips shift over time), or the stage resizes.
   const editable = clip != null && clip.kind !== "audio";
   const transformKey = clip
-    ? `${clip.id}:${clip.xPct}:${clip.yPct}:${clip.scale}:${"fontSizePx" in clip ? clip.fontSizePx : ""}:${"text" in clip ? clip.text : ""}`
+    ? `${clip.id}:${clip.xPct}:${clip.yPct}:${clip.scale}:${clip.keyframes?.length ?? 0}:${playheadSec.toFixed(3)}:${"fontSizePx" in clip ? clip.fontSizePx : ""}:${"text" in clip ? clip.text : ""}`
     : null;
 
   useLayoutEffect(() => {
@@ -410,12 +413,13 @@ function StageInteraction({ stageRef }: { stageRef: React.RefObject<HTMLDivEleme
     pushHistory();
     const startX = e.clientX;
     const startY = e.clientY;
-    const baseX = clip.xPct;
-    const baseY = clip.yPct;
+    const base = resolveTransform(clip, playheadSec);
+    const baseX = base.xPct;
+    const baseY = base.yPct;
     const onMove = (ev: PointerEvent) => {
       const dxPct = ((ev.clientX - startX) / rect.width) * 100;
       const dyPct = ((ev.clientY - startY) / rect.height) * 100;
-      updateClip(clip.id, {
+      setTransformAtPlayhead(clip.id, {
         xPct: clamp(baseX + dxPct, -50, 150),
         yPct: clamp(baseY + dyPct, -50, 150),
       });
@@ -439,11 +443,11 @@ function StageInteraction({ stageRef }: { stageRef: React.RefObject<HTMLDivEleme
     const cx = rect.left + box.left + box.width / 2;
     const cy = rect.top + box.top + box.height / 2;
     const startDist = Math.hypot(e.clientX - cx, e.clientY - cy) || 1;
-    const baseScale = clip.scale;
+    const baseScale = resolveTransform(clip, playheadSec).scale;
     const onMove = (ev: PointerEvent) => {
       const dist = Math.hypot(ev.clientX - cx, ev.clientY - cy);
       const next = clamp((baseScale * dist) / startDist, MIN_SCALE, MAX_SCALE);
-      updateClip(clip.id, { scale: next });
+      setTransformAtPlayhead(clip.id, { scale: next });
     };
     const onUp = () => {
       window.removeEventListener("pointermove", onMove);

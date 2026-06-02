@@ -1,12 +1,17 @@
 import { create } from "zustand";
+import { KEYFRAME_EPSILON, resolveTransform } from "@/lib/clips";
 import type {
   AspectRatio,
   Clip,
+  Keyframe,
   LibraryFilter,
+  MediaClip,
   MediaItem,
   ProjectMeta,
+  TextClip,
   Track,
   TrackKind,
+  Transform,
 } from "@/types";
 
 // Phase 1.5 store: clip ops, drag sessions, and a small undo/redo history layer.
@@ -107,6 +112,14 @@ interface EditorState {
   deleteSelected: () => void;
   /** Split a video clip's audio onto a new audio track and mute the video. */
   detachAudio: (clipId: string) => void;
+
+  // ── Transform / keyframes (visible clips)
+  /** Apply a transform patch: edits the keyframe at the playhead if the clip is
+   *  animated, otherwise the static transform. No history (callers snapshot). */
+  setTransformAtPlayhead: (clipId: string, patch: Partial<Transform>) => void;
+  addKeyframeAtPlayhead: (clipId: string) => void;
+  removeKeyframe: (clipId: string, index: number) => void;
+  clearKeyframes: (clipId: string) => void;
 
   // ── Drag session (library → timeline)
   beginDragSession: (mediaId: string, kind: MediaItem["kind"]) => void;
@@ -443,6 +456,61 @@ export const useEditor = create<EditorState>((set, get) => ({
         },
         selectedClipIds: [audioClipId],
       });
+    }),
+
+  // Transform / keyframes
+  setTransformAtPlayhead: (clipId, patch) =>
+    set((s) => {
+      const clip = s.clips[clipId];
+      if (!clip || clip.kind === "audio") return s;
+      const vc = clip as MediaClip | TextClip;
+      const kfs = vc.keyframes;
+      if (!kfs || kfs.length === 0) {
+        return { clips: { ...s.clips, [clipId]: { ...vc, ...patch } as Clip } };
+      }
+      const t = Math.max(0, Math.min(vc.durationSec, s.playheadSec - vc.startSec));
+      const cur = resolveTransform(vc, s.playheadSec);
+      const merged = {
+        xPct: patch.xPct ?? cur.xPct,
+        yPct: patch.yPct ?? cur.yPct,
+        scale: patch.scale ?? cur.scale,
+      };
+      const idx = kfs.findIndex((k) => Math.abs(k.tSec - t) <= KEYFRAME_EPSILON);
+      const keyframes =
+        idx >= 0
+          ? kfs.map((k, i) => (i === idx ? { ...k, ...merged } : k))
+          : [...kfs, { tSec: t, ...merged }].sort((a, b) => a.tSec - b.tSec);
+      return { clips: { ...s.clips, [clipId]: { ...vc, keyframes } as Clip } };
+    }),
+  addKeyframeAtPlayhead: (clipId) =>
+    set((s) => {
+      const clip = s.clips[clipId];
+      if (!clip || clip.kind === "audio") return s;
+      const vc = clip as MediaClip | TextClip;
+      const t = Math.max(0, Math.min(vc.durationSec, s.playheadSec - vc.startSec));
+      const cur = resolveTransform(vc, s.playheadSec);
+      const kf: Keyframe = { tSec: t, xPct: cur.xPct, yPct: cur.yPct, scale: cur.scale };
+      const existing = (vc.keyframes ?? []).filter((k) => Math.abs(k.tSec - t) > KEYFRAME_EPSILON);
+      const keyframes = [...existing, kf].sort((a, b) => a.tSec - b.tSec);
+      return withHistory(s, { clips: { ...s.clips, [clipId]: { ...vc, keyframes } as Clip } });
+    }),
+  removeKeyframe: (clipId, index) =>
+    set((s) => {
+      const clip = s.clips[clipId];
+      if (!clip || clip.kind === "audio") return s;
+      const vc = clip as MediaClip | TextClip;
+      if (!vc.keyframes) return s;
+      const next = vc.keyframes.filter((_, i) => i !== index);
+      return withHistory(s, {
+        clips: { ...s.clips, [clipId]: { ...vc, keyframes: next.length ? next : undefined } as Clip },
+      });
+    }),
+  clearKeyframes: (clipId) =>
+    set((s) => {
+      const clip = s.clips[clipId];
+      if (!clip || clip.kind === "audio") return s;
+      const vc = clip as MediaClip | TextClip;
+      return withHistory(s, { clips: { ...s.clips, [clipId]: { ...vc, keyframes: undefined } as Clip } });
     }),
 
   // Drag session

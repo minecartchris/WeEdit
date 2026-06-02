@@ -1,6 +1,6 @@
-import { AudioLines, MousePointerSquareDashed, SlidersHorizontal, Volume2, VolumeX } from "lucide-react";
+import { AudioLines, Diamond, MousePointerSquareDashed, SlidersHorizontal, Volume2, VolumeX, X } from "lucide-react";
 import { NumberField } from "@/components/ui/NumberField";
-import { MAX_SCALE, MIN_SCALE, TEXT_CHAR_LIMIT, pctToPx, pxToPct } from "@/lib/clips";
+import { MAX_SCALE, MIN_SCALE, TEXT_CHAR_LIMIT, pctToPx, pxToPct, resolveTransform } from "@/lib/clips";
 import { useEditor } from "@/state/editor";
 import { usePrefs } from "@/state/prefs";
 import type { AudioTrackInfo, Clip, MediaClip, TextClip } from "@/types";
@@ -51,6 +51,7 @@ function ClipInspector({ clip }: { clip: Clip }) {
       <KindBadge clip={clip} />
       {clip.kind === "text" ? <TextProps clip={clip} /> : <MediaProps clip={clip} />}
       {clip.kind !== "audio" && <TransformProps clip={clip} />}
+      {clip.kind !== "audio" && <KeyframeProps clip={clip} />}
     </div>
   );
 }
@@ -70,48 +71,99 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 }
 
 function TransformProps({ clip }: { clip: MediaClip | TextClip }) {
-  const updateClip = useEditor((s) => s.updateClip);
+  const setTransform = useEditor((s) => s.setTransformAtPlayhead);
   const pushHistory = useEditor((s) => s.pushHistory);
   const unit = usePrefs((s) => s.positionUnit);
   const frameW = useEditor((s) => s.project.width);
   const frameH = useEditor((s) => s.project.height);
+  const playheadSec = useEditor((s) => s.playheadSec);
   const pixels = unit === "pixels";
+  // Show the resolved transform at the playhead so keyframed clips read live.
+  const tf = resolveTransform(clip, playheadSec);
 
   return (
     <section className="flex flex-col gap-3 border-t border-we-border pt-4">
       <SectionTitle>Transform</SectionTitle>
       <NumberField
         label={`X position${pixels ? " (px)" : ""}`}
-        value={pixels ? pctToPx(clip.xPct, frameW) : clip.xPct}
+        value={pixels ? pctToPx(tf.xPct, frameW) : tf.xPct}
         min={pixels ? Math.round(-0.5 * frameW) : -50}
         max={pixels ? Math.round(1.5 * frameW) : 150}
         step={pixels ? 1 : 0.1}
         decimals={pixels ? 0 : 1}
         suffix={pixels ? "px" : "%"}
         onCommitStart={pushHistory}
-        onChange={(v) => updateClip(clip.id, { xPct: pixels ? pxToPct(v, frameW) : v })}
+        onChange={(v) => setTransform(clip.id, { xPct: pixels ? pxToPct(v, frameW) : v })}
       />
       <NumberField
         label={`Y position${pixels ? " (px)" : ""}`}
-        value={pixels ? pctToPx(clip.yPct, frameH) : clip.yPct}
+        value={pixels ? pctToPx(tf.yPct, frameH) : tf.yPct}
         min={pixels ? Math.round(-0.5 * frameH) : -50}
         max={pixels ? Math.round(1.5 * frameH) : 150}
         step={pixels ? 1 : 0.1}
         decimals={pixels ? 0 : 1}
         suffix={pixels ? "px" : "%"}
         onCommitStart={pushHistory}
-        onChange={(v) => updateClip(clip.id, { yPct: pixels ? pxToPct(v, frameH) : v })}
+        onChange={(v) => setTransform(clip.id, { yPct: pixels ? pxToPct(v, frameH) : v })}
       />
       <NumberField
         label="Scale / zoom"
-        value={Math.round(clip.scale * 100)}
+        value={Math.round(tf.scale * 100)}
         min={Math.round(MIN_SCALE * 100)}
         max={Math.round(MAX_SCALE * 100)}
         step={1}
         suffix="%"
         onCommitStart={pushHistory}
-        onChange={(v) => updateClip(clip.id, { scale: v / 100 })}
+        onChange={(v) => setTransform(clip.id, { scale: v / 100 })}
       />
+    </section>
+  );
+}
+
+function KeyframeProps({ clip }: { clip: MediaClip | TextClip }) {
+  const addKeyframe = useEditor((s) => s.addKeyframeAtPlayhead);
+  const removeKeyframe = useEditor((s) => s.removeKeyframe);
+  const clearKeyframes = useEditor((s) => s.clearKeyframes);
+  const kfs = clip.keyframes ?? [];
+
+  return (
+    <section className="flex flex-col gap-2 border-t border-we-border pt-4">
+      <div className="flex items-center justify-between">
+        <SectionTitle>Keyframes (X / Y / Zoom)</SectionTitle>
+        {kfs.length > 0 && (
+          <button onClick={() => clearKeyframes(clip.id)} className="text-[11px] text-we-muted hover:text-we-ink">
+            Clear
+          </button>
+        )}
+      </div>
+      <button
+        onClick={() => addKeyframe(clip.id)}
+        className="we-btn justify-center border border-we-border"
+        title="Capture the current position/zoom as a keyframe at the playhead"
+      >
+        <Diamond className="w-4 h-4 text-we-teal" />
+        Add keyframe at playhead
+      </button>
+      {kfs.length > 0 && (
+        <ul className="flex flex-col gap-1">
+          {kfs.map((k, i) => (
+            <li
+              key={i}
+              className="flex items-center justify-between gap-2 text-xs text-we-muted px-2 py-1 rounded hover:bg-we-hover"
+            >
+              <span className="tabular-nums truncate">
+                {k.tSec.toFixed(2)}s · {Math.round(k.xPct)},{Math.round(k.yPct)} · {Math.round(k.scale * 100)}%
+              </span>
+              <button onClick={() => removeKeyframe(clip.id, i)} className="text-we-muted hover:text-red-500 shrink-0" title="Remove keyframe">
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="text-[10px] text-we-muted leading-4">
+        Add 2+ keyframes at different playhead times to animate. Editing the transform updates the keyframe at the playhead.
+      </p>
     </section>
   );
 }

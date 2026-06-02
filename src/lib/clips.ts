@@ -1,4 +1,4 @@
-import type { Clip, MediaClip, MediaItem, Track } from "@/types";
+import type { Clip, MediaClip, MediaItem, TextClip, Track, Transform } from "@/types";
 
 export const MIN_CLIP_DURATION = 0.1;
 export const DEFAULT_IMAGE_DURATION = 5;
@@ -27,6 +27,47 @@ export function normalizeClips(
   const out: Record<string, Clip> = {};
   for (const [id, c] of Object.entries(clips)) out[id] = normalizeClip(c);
   return out;
+}
+
+/** How close (seconds) a keyframe must be to the playhead to count as "here". */
+export const KEYFRAME_EPSILON = 0.02;
+
+function lerp(a: number, b: number, f: number): number {
+  return a + (b - a) * f;
+}
+
+/**
+ * The effective transform of a clip at a given timeline time. With no keyframes
+ * the static xPct/yPct/scale are used; otherwise the surrounding keyframes are
+ * linearly interpolated (clamped to the first/last outside their range).
+ */
+export function resolveTransform(clip: MediaClip | TextClip, playheadSec: number): Transform {
+  const kfs = clip.keyframes;
+  if (!kfs || kfs.length === 0) {
+    return { xPct: clip.xPct, yPct: clip.yPct, scale: clip.scale };
+  }
+  const t = playheadSec - clip.startSec;
+  if (t <= kfs[0].tSec) return pickTransform(kfs[0]);
+  const last = kfs[kfs.length - 1];
+  if (t >= last.tSec) return pickTransform(last);
+  for (let i = 0; i < kfs.length - 1; i++) {
+    const a = kfs[i];
+    const b = kfs[i + 1];
+    if (t >= a.tSec && t <= b.tSec) {
+      const span = b.tSec - a.tSec || 1;
+      const f = (t - a.tSec) / span;
+      return {
+        xPct: lerp(a.xPct, b.xPct, f),
+        yPct: lerp(a.yPct, b.yPct, f),
+        scale: lerp(a.scale, b.scale, f),
+      };
+    }
+  }
+  return pickTransform(last);
+}
+
+function pickTransform(t: Transform): Transform {
+  return { xPct: t.xPct, yPct: t.yPct, scale: t.scale };
 }
 
 /** Convert a percentage (0..100) of a dimension to pixels, and back. */

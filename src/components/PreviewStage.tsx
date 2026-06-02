@@ -177,6 +177,7 @@ function VideoLayer({
             key={t.index}
             track={t}
             clip={clip}
+            muted={(clip.mutedTracks ?? []).includes(t.index)}
             isPlaying={isPlaying}
             playheadSec={playheadSec}
             trackVolume={volume}
@@ -189,18 +190,20 @@ function VideoLayer({
 function ExtractedAudioTrack({
   track,
   clip,
+  muted,
   isPlaying,
   playheadSec,
   trackVolume,
 }: {
   track: import("@/types").AudioTrackInfo;
   clip: MediaClip;
+  muted: boolean;
   isPlaying: boolean;
   playheadSec: number;
   trackVolume: number;
 }) {
   const ref = useRef<HTMLAudioElement>(null);
-  const effectiveVolume = track.muted ? 0 : trackVolume;
+  const effectiveVolume = muted ? 0 : trackVolume;
 
   useEffect(() => {
     const a = ref.current;
@@ -261,7 +264,7 @@ function TextLayer({ clip, playheadSec }: { clip: TextClip; playheadSec: number 
   return (
     <div
       data-cliplayer={clip.id}
-      className="absolute whitespace-pre-wrap text-center"
+      className="absolute text-center"
       style={{
         left: `${tf.xPct}%`,
         top: `${tf.yPct}%`,
@@ -272,6 +275,11 @@ function TextLayer({ clip, playheadSec }: { clip: TextClip; playheadSec: number 
         color: clip.color,
         textShadow: "0 2px 12px rgba(0,0,0,0.55)",
         pointerEvents: "none",
+        // Size to content (honoring explicit newlines) so positioning the text
+        // near a stage edge doesn't squeeze its width and force it to re-wrap.
+        whiteSpace: "pre",
+        width: "max-content",
+        maxWidth: "none",
       }}
     >
       {clip.text}

@@ -113,7 +113,17 @@ export function Timeline() {
       if (!e.altKey) return;
       e.preventDefault();
       const { pxPerSec: cur, setZoom: zoom } = useEditor.getState();
+      // Keep the time under the cursor fixed across the zoom so the content
+      // doesn't jump (which reads as a flash). Lanes start after the header.
+      const rect = el.getBoundingClientRect();
+      const cursorContentX = e.clientX - rect.left + el.scrollLeft - TRACK_HEADER_PX;
+      const timeAtCursor = cur > 0 ? cursorContentX / cur : 0;
       zoom(cur * (e.deltaY < 0 ? 1.12 : 1 / 1.12));
+      const next = useEditor.getState().pxPerSec;
+      // Re-anchor after the DOM reflows to the new width.
+      requestAnimationFrame(() => {
+        el.scrollLeft = TRACK_HEADER_PX + timeAtCursor * next - (e.clientX - rect.left);
+      });
     };
 
     let panning = false;
@@ -165,7 +175,11 @@ export function Timeline() {
           via `position: sticky`; the ruler row sticks to the top so it stays
           visible while scrolling tracks vertically. overflow-auto keeps zoomed
           lanes / extra tracks contained instead of pushing the whole app. */}
-      <div ref={scrollContainerRef} className="flex-1 min-h-0 overflow-auto">
+      <div
+        ref={scrollContainerRef}
+        className="flex-1 min-h-0 overflow-auto"
+        style={{ scrollbarGutter: "stable" }}
+      >
         <div className="relative" style={{ width: SCROLL_INNER_WIDTH }}>
           {/* Ruler row */}
           <div className="flex sticky top-0 z-30">

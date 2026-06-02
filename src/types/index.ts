@@ -103,6 +103,12 @@ export interface MediaClip extends ClipBase, Transform {
   opacity: number;
   /** 0..1, applies to video/audio. */
   volume: number;
+  /**
+   * Per-clip muted audio-stream indices (for multi-audio sources). Lives on the
+   * clip — not the shared MediaItem — so two clips of the same media (e.g. a
+   * copy/paste) can mute different streams independently.
+   */
+  mutedTracks?: number[];
 }
 
 export interface TextClip extends ClipBase, Transform {

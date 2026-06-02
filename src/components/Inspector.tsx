@@ -171,9 +171,15 @@ function KeyframeProps({ clip }: { clip: MediaClip | TextClip }) {
 function MediaProps({ clip }: { clip: MediaClip }) {
   const updateClip = useEditor((s) => s.updateClip);
   const pushHistory = useEditor((s) => s.pushHistory);
-  const setMediaAudioTrackMuted = useEditor((s) => s.setMediaAudioTrackMuted);
   const detachAudio = useEditor((s) => s.detachAudio);
   const media = useEditor((s) => s.media.find((m) => m.id === clip.mediaId) ?? null);
+
+  const muted = clip.mutedTracks ?? [];
+  const toggleTrackMute = (index: number) => {
+    const next = muted.includes(index) ? muted.filter((i) => i !== index) : [...muted, index];
+    pushHistory();
+    updateClip(clip.id, { mutedTracks: next });
+  };
 
   return (
     <section className="flex flex-col gap-3">
@@ -207,12 +213,12 @@ function MediaProps({ clip }: { clip: MediaClip }) {
             <TrackMuteRow
               key={t.index}
               label={trackDisplayName(t)}
-              muted={t.muted}
-              onToggle={() => setMediaAudioTrackMuted(media.id, t.index, !t.muted)}
+              muted={muted.includes(t.index)}
+              onToggle={() => toggleTrackMute(t.index)}
             />
           ))}
           <div className="text-[10px] text-we-muted leading-4">
-            Per-track mute applies to all clips using this media.
+            Mutes only this clip — copies of the same media stay independent.
           </div>
         </div>
       )}

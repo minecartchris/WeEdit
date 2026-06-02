@@ -412,12 +412,17 @@ export const useEditor = create<EditorState>((set, get) => ({
   splitAtPlayhead: () =>
     set((s) => {
       const t = s.playheadSec;
+      const isUnder = (c: Clip) => c.startSec < t && t < c.startSec + c.durationSec;
+      // Prefer splitting selected clips the playhead actually passes through;
+      // otherwise act as a razor on whatever clip(s) sit under the playhead.
+      const selectedUnder = s.selectedClipIds.filter((id) => {
+        const c = s.clips[id];
+        return c && isUnder(c);
+      });
       const targetIds =
-        s.selectedClipIds.length > 0
-          ? s.selectedClipIds
-          : Object.values(s.clips)
-              .filter((c) => c.startSec < t && t < c.startSec + c.durationSec)
-              .map((c) => c.id);
+        selectedUnder.length > 0
+          ? selectedUnder
+          : Object.values(s.clips).filter(isUnder).map((c) => c.id);
       if (targetIds.length === 0) return s;
 
       const newClips: Record<string, Clip> = { ...s.clips };

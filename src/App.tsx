@@ -10,6 +10,7 @@ import { useAutoSave } from "@/hooks/useAutoSave";
 import { usePlayback } from "@/hooks/usePlayback";
 import { useShortcuts } from "@/hooks/useShortcuts";
 import { useIntegrations } from "@/state/integrations";
+import { useLibrary } from "@/state/library";
 import { usePrefs } from "@/state/prefs";
 
 export default function App() {
@@ -19,10 +20,12 @@ export default function App() {
 
   const loadIntegrations = useIntegrations((s) => s.load);
   const loadPrefs = usePrefs((s) => s.load);
+  const loadLibrary = useLibrary((s) => s.load);
   useEffect(() => {
     void loadPrefs().catch((err) => console.error("Failed to load prefs:", err));
+    void loadLibrary().catch((err) => console.error("Failed to load library:", err));
     void loadIntegrations().catch((err) => console.error("Failed to load integrations:", err));
-  }, [loadIntegrations, loadPrefs]);
+  }, [loadIntegrations, loadPrefs, loadLibrary]);
 
   // Resizable panel sizes (persisted in prefs). The Inspector + its splitter
   // are mounted in a later phase; the media library and timeline are resizable

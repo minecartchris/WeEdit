@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AudioPanel } from "@/components/AudioPanel";
+import { LibraryPanel } from "@/components/LibraryPanel";
 import { NasPanel } from "@/components/NasPanel";
 import { StockPanel } from "@/components/StockPanel";
 import { TextPanel } from "@/components/TextPanel";
@@ -154,6 +155,15 @@ export function MediaLibrary() {
     return (
       <section className="flex-1 min-w-0 bg-we-panel border-r border-we-border flex flex-col">
         <TextPanel />
+      </section>
+    );
+  }
+  // Persistent user library categories — upload your own files, kept across
+  // sessions. (The Videos/Images/Audio tabs keep their stock browsers.)
+  if (tab === "uploads" || tab === "backgrounds" || tab === "extras" || tab === "transitions") {
+    return (
+      <section className="flex-1 min-w-0 bg-we-panel border-r border-we-border flex flex-col">
+        <LibraryPanel category={tab} />
       </section>
     );
   }

@@ -26,6 +26,7 @@ export function ClipBlock({ clip, pxPerSec }: ClipBlockProps) {
   const updateClip = useEditor((s) => s.updateClip);
   const pushHistory = useEditor((s) => s.pushHistory);
   const removeClip = useEditor((s) => s.removeClip);
+  const moveClipToTrack = useEditor((s) => s.moveClipToTrack);
   const detachAudio = useEditor((s) => s.detachAudio);
   const splitAtPlayhead = useEditor((s) => s.splitAtPlayhead);
   const setPlayhead = useEditor((s) => s.setPlayhead);
@@ -57,23 +58,36 @@ export function ClipBlock({ clip, pxPerSec }: ClipBlockProps) {
     const startX = e.clientX;
     const initialStart = clip.startSec;
     const anchors = collectAnchors();
-    const liveClips = useEditor.getState().clips;
 
     const onMove = (ev: MouseEvent) => {
       const dPx = ev.clientX - startX;
       const dSec = dPx / pxPerSec;
       let nextStart = Math.max(0, initialStart + dSec);
       if (!ev.shiftKey) nextStart = snapToAnchors(nextStart, anchors, pxPerSec);
-      // No-overlap clamp against same-track neighbours.
+
+      // Which lane is the cursor over? Move to it if it accepts this clip kind.
+      const overEl = document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null;
+      const lane = overEl?.closest<HTMLElement>("[data-track-id]");
+      const laneId = lane?.getAttribute("data-track-id") ?? clip.trackId;
+      const laneKind = lane?.getAttribute("data-track-kind");
+      const targetTrackId =
+        lane && laneKind && laneAccepts(clip.kind, laneKind) ? laneId : clip.trackId;
+
+      const sameTrack = targetTrackId === clip.trackId;
+      const liveClips = useEditor.getState().clips;
       nextStart = clampClipStart(
         clip.id,
-        clip.trackId,
+        targetTrackId,
         clip.durationSec,
-        initialStart,
+        sameTrack ? initialStart : nextStart,
         nextStart,
         liveClips,
       );
-      updateClip(clip.id, { startSec: nextStart });
+      if (sameTrack) {
+        updateClip(clip.id, { startSec: nextStart });
+      } else {
+        moveClipToTrack(clip.id, targetTrackId, nextStart);
+      }
     };
     const onUp = () => {
       document.removeEventListener("mousemove", onMove);
@@ -393,6 +407,15 @@ function AudioBars({ width }: { width: number }) {
       ))}
     </div>
   );
+}
+
+// Whether a track lane (by kind) accepts a clip of the given kind during a
+// cross-track drag. Mirrors isMediaCompatibleWithTrack but also handles text.
+function laneAccepts(clipKind: Clip["kind"], trackKind: string): boolean {
+  if (trackKind === "text") return clipKind === "text";
+  if (trackKind === "audio") return clipKind === "audio";
+  if (trackKind === "video") return clipKind === "video" || clipKind === "image";
+  return false;
 }
 
 function renderClipTitle(clip: Clip, m: MediaItem | undefined): string {

@@ -1,4 +1,6 @@
 import {
+  ArrowDown,
+  ArrowUp,
   ChevronDown,
   Maximize2,
   MoreVertical,
@@ -99,6 +101,56 @@ export function Timeline() {
       hasAutoFit.current = true;
     }
   }, [totalSec, pxPerSec, fitToWindow]);
+
+  // Alt+wheel zooms the timeline; middle-mouse-drag pans it. Bound natively so
+  // the wheel listener can be non-passive (preventDefault) and so we can stop
+  // the browser's middle-click autoscroll.
+  useEffect(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+
+    const onWheel = (e: WheelEvent) => {
+      if (!e.altKey) return;
+      e.preventDefault();
+      const { pxPerSec: cur, setZoom: zoom } = useEditor.getState();
+      zoom(cur * (e.deltaY < 0 ? 1.12 : 1 / 1.12));
+    };
+
+    let panning = false;
+    let lastX = 0;
+    let lastY = 0;
+    const onDown = (e: MouseEvent) => {
+      if (e.button !== 1) return; // middle button
+      e.preventDefault();
+      panning = true;
+      lastX = e.clientX;
+      lastY = e.clientY;
+      el.style.cursor = "grabbing";
+    };
+    const onMove = (e: MouseEvent) => {
+      if (!panning) return;
+      el.scrollLeft -= e.clientX - lastX;
+      el.scrollTop -= e.clientY - lastY;
+      lastX = e.clientX;
+      lastY = e.clientY;
+    };
+    const onUp = () => {
+      if (!panning) return;
+      panning = false;
+      el.style.cursor = "";
+    };
+
+    el.addEventListener("wheel", onWheel, { passive: false });
+    el.addEventListener("mousedown", onDown);
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      el.removeEventListener("wheel", onWheel);
+      el.removeEventListener("mousedown", onDown);
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, []);
 
   return (
     <section className="flex flex-col min-h-0 h-full bg-we-panel border-t border-we-border min-w-0">
@@ -383,6 +435,7 @@ function TrackHeader({ track }: { track: Track }) {
   const setMuted = useEditor((s) => s.setTrackMuted);
   const renameTrack = useEditor((s) => s.renameTrack);
   const removeTrack = useEditor((s) => s.removeTrack);
+  const moveTrackLayer = useEditor((s) => s.moveTrackLayer);
 
   const onRename = () => {
     const next = window.prompt(`Rename ${track.name}`, track.name);
@@ -415,6 +468,18 @@ function TrackHeader({ track }: { track: Track }) {
           <MenuItem onSelect={() => setMuted(track.id, !track.muted)}>
             {track.muted ? "Unmute" : "Mute"}
           </MenuItem>
+          {track.kind === "video" && (
+            <>
+              <MenuSeparator />
+              <MenuLabel>Layer</MenuLabel>
+              <MenuItem icon={ArrowUp} onSelect={() => moveTrackLayer(track.id, "up")}>
+                Bring forward
+              </MenuItem>
+              <MenuItem icon={ArrowDown} onSelect={() => moveTrackLayer(track.id, "down")}>
+                Send backward
+              </MenuItem>
+            </>
+          )}
           <MenuSeparator />
           <MenuItem danger icon={Trash2} onSelect={onDelete}>Delete track</MenuItem>
         </Menu>

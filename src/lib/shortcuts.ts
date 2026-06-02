@@ -32,6 +32,8 @@ export const SHORTCUT_COMMANDS: ShortcutCommand[] = [
   { id: "play-pause", label: "Play / pause", defaultBinding: "space", run: () => useEditor.getState().togglePlay() },
   { id: "split", label: "Split at playhead", defaultBinding: "s", run: () => useEditor.getState().splitAtPlayhead() },
   { id: "delete", label: "Delete selection", defaultBinding: "delete", run: () => useEditor.getState().deleteSelected() },
+  { id: "copy", label: "Copy clips", defaultBinding: "ctrl+c", run: () => useEditor.getState().copySelectedClips() },
+  { id: "paste", label: "Paste clips", defaultBinding: "ctrl+v", run: () => useEditor.getState().pasteClips() },
   { id: "undo", label: "Undo", defaultBinding: "ctrl+z", run: () => useEditor.getState().undo() },
   { id: "redo", label: "Redo", defaultBinding: "ctrl+shift+z", run: () => useEditor.getState().redo() },
   { id: "save", label: "Save project", defaultBinding: "ctrl+s", run: () => void saveProject().catch((e) => console.error("Save failed:", e)) },

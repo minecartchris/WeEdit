@@ -1,5 +1,10 @@
 import { create } from "zustand";
-import { KEYFRAME_EPSILON, resolveTransform } from "@/lib/clips";
+import {
+  KEYFRAME_EPSILON,
+  clampClipStart,
+  isMediaCompatibleWithTrack,
+  resolveTransform,
+} from "@/lib/clips";
 import type {
   AspectRatio,
   Clip,
@@ -103,13 +108,24 @@ interface EditorState {
   renameTrack: (id: string, name: string) => void;
   setTrackVolume: (id: string, volume: number) => void;
   setTrackMuted: (id: string, muted: boolean) => void;
+  /** Move a track up/down its render order among same-kind tracks (z-index). */
+  moveTrackLayer: (id: string, direction: "up" | "down") => void;
 
   // ── Clips
   addClip: (clip: Clip) => void;
   removeClip: (id: string) => void;
   updateClip: (id: string, patch: Partial<Clip>) => void;
+  /** Move a clip to another track (and set its start). No history — used
+   *  during a drag; caller snapshots once at gesture start. */
+  moveClipToTrack: (clipId: string, newTrackId: string, startSec: number) => void;
   splitAtPlayhead: () => void;
   deleteSelected: () => void;
+
+  // ── Clipboard
+  /** Clips copied with copySelectedClips, ready to paste. */
+  clipboard: Clip[];
+  copySelectedClips: () => void;
+  pasteClips: () => void;
   /** Split a video clip's audio onto a new audio track and mute the video. */
   detachAudio: (clipId: string) => void;
 
@@ -203,6 +219,7 @@ export const useEditor = create<EditorState>((set, get) => ({
   hoverTrackId: null,
   projectPath: null,
   lastSavedAt: null,
+  clipboard: [],
   past: [],
   future: [],
 
@@ -316,6 +333,30 @@ export const useEditor = create<EditorState>((set, get) => ({
     set((s) => ({
       tracks: s.tracks.map((t) => (t.id === id ? { ...t, muted } : t)),
     })),
+  // Reorder a track within its same-kind stack by swapping zIndex with the
+  // neighbour. "up" = a higher layer (renders on top). PreviewStage picks the
+  // active video from the highest-zIndex video track down.
+  moveTrackLayer: (id, direction) =>
+    set((s) => {
+      const track = s.tracks.find((t) => t.id === id);
+      if (!track) return s;
+      const peers = s.tracks
+        .filter((t) => t.kind === track.kind)
+        .sort((a, b) => a.zIndex - b.zIndex);
+      const idx = peers.findIndex((t) => t.id === id);
+      const swapIdx = direction === "up" ? idx + 1 : idx - 1;
+      if (swapIdx < 0 || swapIdx >= peers.length) return s;
+      const other = peers[swapIdx];
+      return withHistory(s, {
+        tracks: s.tracks.map((t) =>
+          t.id === track.id
+            ? { ...t, zIndex: other.zIndex }
+            : t.id === other.id
+            ? { ...t, zIndex: track.zIndex }
+            : t,
+        ),
+      });
+    }),
 
   // Clips
   addClip: (clip) =>
@@ -350,6 +391,23 @@ export const useEditor = create<EditorState>((set, get) => ({
       const existing = s.clips[id];
       if (!existing) return s;
       return { clips: { ...s.clips, [id]: { ...existing, ...patch } as Clip } };
+    }),
+  moveClipToTrack: (clipId, newTrackId, startSec) =>
+    set((s) => {
+      const clip = s.clips[clipId];
+      if (!clip) return s;
+      if (clip.trackId === newTrackId) {
+        return { clips: { ...s.clips, [clipId]: { ...clip, startSec } as Clip } };
+      }
+      const tracks = s.tracks.map((t) => {
+        if (t.id === clip.trackId) return { ...t, clipIds: t.clipIds.filter((c) => c !== clipId) };
+        if (t.id === newTrackId) return { ...t, clipIds: [...t.clipIds, clipId] };
+        return t;
+      });
+      return {
+        tracks,
+        clips: { ...s.clips, [clipId]: { ...clip, trackId: newTrackId, startSec } as Clip },
+      };
     }),
   splitAtPlayhead: () =>
     set((s) => {
@@ -412,6 +470,49 @@ export const useEditor = create<EditorState>((set, get) => ({
           clipIds: t.clipIds.filter((cid) => !removed.has(cid)),
         })),
         selectedClipIds: [],
+      });
+    }),
+
+  // Clipboard. Copy deep-clones the current selection; paste lays them down at
+  // the playhead preserving their relative offsets, on the original track when
+  // it still fits else the first compatible one, clamped to avoid overlap.
+  copySelectedClips: () =>
+    set((s) => ({
+      clipboard: s.selectedClipIds
+        .map((id) => s.clips[id])
+        .filter((c): c is Clip => Boolean(c))
+        .map((c) => ({ ...c })),
+    })),
+  pasteClips: () =>
+    set((s) => {
+      if (s.clipboard.length === 0) return s;
+      const minStart = Math.min(...s.clipboard.map((c) => c.startSec));
+      const compatible = (c: Clip) => (t: Track) =>
+        c.kind === "text" ? t.kind === "text" : isMediaCompatibleWithTrack(c.kind, t);
+
+      const newClips: Record<string, Clip> = { ...s.clips };
+      const trackAdds: Record<string, string[]> = {};
+      const newSelection: string[] = [];
+
+      for (const c of s.clipboard) {
+        const fits = compatible(c);
+        const orig = s.tracks.find((t) => t.id === c.trackId);
+        const target = orig && fits(orig) ? orig : s.tracks.find(fits);
+        if (!target) continue;
+        const id = crypto.randomUUID();
+        const desiredStart = Math.max(0, s.playheadSec + (c.startSec - minStart));
+        const start = clampClipStart(id, target.id, c.durationSec, desiredStart, desiredStart, newClips);
+        newClips[id] = { ...c, id, trackId: target.id, startSec: start } as Clip;
+        (trackAdds[target.id] ??= []).push(id);
+        newSelection.push(id);
+      }
+      if (newSelection.length === 0) return s;
+      return withHistory(s, {
+        clips: newClips,
+        tracks: s.tracks.map((t) =>
+          trackAdds[t.id] ? { ...t, clipIds: [...t.clipIds, ...trackAdds[t.id]] } : t,
+        ),
+        selectedClipIds: newSelection,
       });
     }),
 
@@ -532,6 +633,7 @@ export const useEditor = create<EditorState>((set, get) => ({
       selectedClipIds: [],
       playheadSec: 0,
       isPlaying: false,
+      clipboard: [],
       past: [],
       future: [],
     }),
@@ -546,6 +648,7 @@ export const useEditor = create<EditorState>((set, get) => ({
       selectedClipIds: [],
       playheadSec: 0,
       isPlaying: false,
+      clipboard: [],
       past: [],
       future: [],
     }),

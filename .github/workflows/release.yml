@@ -1,31 +1,31 @@
-# Two-job CI:
-#   • `build` runs on every push to main, every PR, and manual triggers —
-#     produces an unsigned installer attached to the run as a workflow artifact
-#     so contributors / testers can grab the latest dev build at any time.
-#   • `release` runs only on `v*` tag pushes — signs the installer + latest.json
-#     and publishes a GitHub Release. Existing installs auto-update from this.
+# Commit-driven CI/CD — no manual version bumping, no manual tagging:
 #
-# Prereqs (one-time setup):
-#   1. Public key is already in src-tauri/tauri.conf.json (we generated it).
-#   2. Add the private-key file contents as repo secret TAURI_SIGNING_PRIVATE_KEY.
-#      The key has NO password, so TAURI_SIGNING_PRIVATE_KEY_PASSWORD stays empty
-#      (still required by the action — set it to "" or just an empty secret).
-#   3. Set the GitHub repo URL placeholders in src-tauri/tauri.conf.json
-#      (plugins.updater.endpoints).
+#   • `build`   — runs on PRs and manual dispatch. Produces an unsigned
+#     installer attached to the run as a workflow artifact for testing.
+#   • `release` — runs on every push to main. Builds + signs the installer and
+#     latest.json, then publishes a GitHub Release tagged with the commit hash.
+#     Installed apps auto-update from this.
 #
-# Releasing:
-#   - Bump version in package.json + src-tauri/tauri.conf.json + src-tauri/Cargo.toml
-#   - git commit -am "release: vX.Y.Z" && git tag vX.Y.Z
-#   - git push origin main --tags
-# A signed release appears under GitHub Releases ~10 min later; installed apps
-# auto-update via Check for updates.
+# Versioning: the human-facing release is identified by the commit short SHA
+# (tag `build-<sha>`). But Tauri's auto-updater compares SEMVER versions, not
+# hashes — a hash has no ordering, so it can't tell "newer". So we inject a
+# monotonic version derived from the git commit count (0.0.<count>) into the
+# build. It always increases with each commit, which is exactly what the
+# updater needs, and you never edit a version field by hand.
+#
+# To ship: just `git push origin main`. ~10 min later a signed release appears
+# under Releases and existing installs update via "Check for updates".
+#
+# One-time setup (already done if releases have worked before):
+#   - Public key lives in src-tauri/tauri.conf.json (plugins.updater.pubkey).
+#   - Repo secret TAURI_SIGNING_PRIVATE_KEY holds the matching private key.
+#   - The key has no password, so TAURI_SIGNING_PRIVATE_KEY_PASSWORD may be empty.
 
 name: CI
 
 on:
   push:
     branches: [main]
-    tags: ["v*"]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -36,8 +36,8 @@ permissions:
 jobs:
   build:
     name: Build (unsigned)
-    # Skip when this push is a release tag — the `release` job handles that.
-    if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+    # main pushes go through `release` instead — this is for PRs / manual tests.
+    if: ${{ github.event_name != 'push' }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -79,10 +79,13 @@ jobs:
 
   release:
     name: Release (signed + published)
-    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    if: ${{ github.event_name == 'push' }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history so `git rev-list --count` gives the real commit count.
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -101,6 +104,23 @@ jobs:
           restore-keys: |
             cargo-${{ runner.os }}-
 
+      - name: Derive version + tag from commit
+        id: ver
+        shell: bash
+        run: |
+          # Keep major.minor from the config file, set patch to the commit count
+          # so the version is monotonic (the updater needs ordered versions).
+          BASE=$(node -p "require('./src-tauri/tauri.conf.json').version.split('.').slice(0,2).join('.')")
+          COUNT=$(git rev-list --count HEAD)
+          VERSION="$BASE.$COUNT"
+          SHORT=$(git rev-parse --short HEAD)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "short_sha=$SHORT" >> "$GITHUB_OUTPUT"
+          # Inject the derived version into the build; Tauri bakes it into the
+          # binary and writes it to latest.json for the updater to compare.
+          node -e "const f='./src-tauri/tauri.conf.json';const fs=require('fs');const c=JSON.parse(fs.readFileSync(f));c.version='$VERSION';fs.writeFileSync(f, JSON.stringify(c,null,2)+'\n')"
+          echo "::notice::Releasing $VERSION (commit $SHORT)"
+
       - name: Install npm deps
         run: npm ci
 
@@ -117,9 +137,14 @@ jobs:
           # tauri.release.conf.json overlays createUpdaterArtifacts: true so
           # latest.json + signatures get generated; local builds skip signing.
           args: "--config src-tauri/tauri.release.conf.json"
-          tagName: ${{ github.ref_name }}
-          releaseName: "WeEdit ${{ github.ref_name }}"
+          # Tag/release identified by commit hash, per request. tauri-action
+          # creates the tag on this commit automatically. The updater reads the
+          # "latest" release (not the tag name), so the hash tag is fine.
+          tagName: build-${{ steps.ver.outputs.short_sha }}
+          releaseName: "WeEdit ${{ steps.ver.outputs.version }} (${{ steps.ver.outputs.short_sha }})"
           releaseBody: |
+            Automated build of commit ${{ github.sha }}.
+
             Download the `.msi` or setup `.exe` below to install.
             Existing users get the update via **Check for updates** in the hamburger menu.
           releaseDraft: false

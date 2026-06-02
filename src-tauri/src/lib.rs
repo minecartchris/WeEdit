@@ -8,12 +8,33 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
+use std::ffi::OsStr;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::thread;
 use std::time::Duration;
 use tauri::{Emitter, Manager};
+
+// CREATE_NO_WINDOW: keeps spawned console programs (ffmpeg, ffprobe, net,
+// yt-dlp) from flashing a cmd window on Windows. Without this, every subprocess
+// pops a black console — and the importer/exporter spawn lots of them.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// Builds a `Command` that won't open a console window on Windows. Every
+/// subprocess in this file goes through here instead of `Command::new` so the
+/// no-window flag can't be forgotten at a call site.
+fn command<S: AsRef<OsStr>>(program: S) -> Command {
+    #[allow(unused_mut)]
+    let mut cmd = Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd
+}
 
 // Cooperative-cancel flags for in-flight ffmpeg exports keyed by exportId.
 // The exporting task polls its flag inside the wait-loop; `ffmpeg_cancel`
@@ -145,7 +166,7 @@ fn smb_authenticate_blocking(
     username: Option<String>,
     password: Option<String>,
 ) -> Result<(), String> {
-    let mut cmd = Command::new("net");
+    let mut cmd = command("net");
     cmd.arg("use").arg(&target);
     if let Some(pw) = &password {
         cmd.arg(pw);
@@ -217,7 +238,7 @@ fn find_ffmpeg_binary(name: &str, custom: Option<&str>) -> Option<String> {
         }
     }
 
-    if Command::new(name).arg("-version").output().is_ok() {
+    if command(name).arg("-version").output().is_ok() {
         return Some(name.to_string());
     }
     if let Ok(local_appdata) = std::env::var("LOCALAPPDATA") {
@@ -254,7 +275,7 @@ async fn ffmpeg_check(custom_path: Option<String>) -> Result<String, String> {
     run_blocking("ffmpeg_check", move || {
         let bin = find_ffmpeg_binary("ffmpeg", custom_path.as_deref())
             .ok_or_else(|| FFMPEG_INSTALL_HINT.to_string())?;
-        let output = Command::new(&bin)
+        let output = command(&bin)
             .arg("-version")
             .output()
             .map_err(|e| format!("Found ffmpeg at {bin} but couldn't run it: {e}"))?;
@@ -327,7 +348,7 @@ fn ffprobe_audio_streams_blocking(
     let bin = find_ffmpeg_binary("ffprobe", custom_path.as_deref())
         .ok_or_else(|| FFMPEG_INSTALL_HINT.to_string())?;
 
-    let output = Command::new(&bin)
+    let output = command(&bin)
         .args([
             "-v", "error",
             "-show_streams",
@@ -438,7 +459,7 @@ fn ffmpeg_extract_audio_tracks_blocking(
         // Pick an extension based on codec by probing per-stream? Too much for
         // an MVP — `.m4a` container handles AAC/Opus/MP3/etc via stream copy.
         let out_path = format!("{output_dir}/track-{i}.m4a");
-        let output = Command::new(&bin)
+        let output = command(&bin)
             .args([
                 "-y",                 // overwrite
                 "-hide_banner",
@@ -514,7 +535,7 @@ fn ffmpeg_run_blocking(
     full_args.push("-progress".to_string());
     full_args.push("pipe:1".to_string());
 
-    let mut child = Command::new(&bin)
+    let mut child = command(&bin)
         .args(&full_args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -774,7 +795,7 @@ fn find_ytdlp(custom: Option<&str>) -> Option<String> {
         }
     }
 
-    if Command::new("yt-dlp").arg("--version").output().is_ok() {
+    if command("yt-dlp").arg("--version").output().is_ok() {
         return Some("yt-dlp".to_string());
     }
 
@@ -863,7 +884,7 @@ fn ytdlp_search_blocking(
         &search_url,
     ];
 
-    let output = Command::new(&bin)
+    let output = command(&bin)
         .args(&args)
         .output()
         .map_err(|e| format!("Failed to run yt-dlp search: {e}"))?;
@@ -930,7 +951,7 @@ fn url_encode(s: &str) -> String {
 async fn ytdlp_check(custom_path: Option<String>) -> Result<String, String> {
     run_blocking("ytdlp_check", move || {
         let bin = find_ytdlp(custom_path.as_deref()).ok_or_else(|| YTDLP_INSTALL_HINT.to_string())?;
-        let output = Command::new(&bin)
+        let output = command(&bin)
             .arg("--version")
             .output()
             .map_err(|e| format!("Found yt-dlp at {bin} but couldn't run it: {e}"))?;
@@ -998,7 +1019,7 @@ fn ytdlp_download_blocking(
     }
     args.push(&url);
 
-    let mut child = Command::new(&bin)
+    let mut child = command(&bin)
         .args(&args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

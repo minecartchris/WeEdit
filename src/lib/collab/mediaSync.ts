@@ -1,9 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import { appLocalDataDir } from "@tauri-apps/api/path";
 import { WebrtcProvider } from "y-webrtc";
-import { create } from "zustand";
 import * as Y from "yjs";
 import { useEditor } from "@/state/editor";
+import { clearTransfer, setTransfer, useTransfers } from "@/state/transfers";
 import type { MediaItem } from "@/types";
 
 // Peer-to-peer media transfer for collaboration.
@@ -22,35 +22,6 @@ import type { MediaItem } from "@/types";
 const CHUNK_SIZE = 64 * 1024;        // bytes per chunk
 const SERVE_WINDOW = 24;             // max outstanding (unconsumed) chunks in flight
 const SIGNALING = ["wss://signaling.yjs.dev", "wss://demos.yjs.dev"];
-
-export interface Transfer {
-  hash: string;
-  name: string;
-  received: number; // bytes written so far
-  total: number;    // total bytes (0 if unknown)
-  status: "fetching" | "verifying" | "done" | "error";
-}
-
-interface MediaSyncState {
-  transfers: Record<string, Transfer>;
-}
-
-export const useMediaSync = create<MediaSyncState>(() => ({ transfers: {} }));
-
-function setTransfer(hash: string, patch: Partial<Transfer> & { name?: string }): void {
-  useMediaSync.setState((s) => {
-    const prev = s.transfers[hash] ?? { hash, name: "", received: 0, total: 0, status: "fetching" as const };
-    return { transfers: { ...s.transfers, [hash]: { ...prev, ...patch } } };
-  });
-}
-
-function clearTransfer(hash: string): void {
-  useMediaSync.setState((s) => {
-    const next = { ...s.transfers };
-    delete next[hash];
-    return { transfers: next };
-  });
-}
 
 interface RequestRec {
   hash: string;
@@ -135,7 +106,7 @@ export async function stopMediaSync(): Promise<void> {
   mainAwareness = null;
   served.clear();
   fetches.clear();
-  useMediaSync.setState({ transfers: {} });
+  useTransfers.setState({ transfers: {} });
 }
 
 // Debounce hashing + fetch scanning so a burst of store updates collapses.

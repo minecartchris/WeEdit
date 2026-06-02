@@ -1,16 +1,30 @@
 import { create } from "zustand";
-import { bindEditorToDoc } from "@/lib/collab/bindStore";
-import { createSession, destroySession, getSession } from "@/lib/collab/collabDoc";
-import { startMediaSync, stopMediaSync } from "@/lib/collab/mediaSync";
 import { useEditor } from "@/state/editor";
 
 // Collaboration session state + live presence ("awareness"). Orchestrates the
 // Y.Doc session (collabDoc) and the store binding (bindStore), and surfaces each
 // connected peer's playhead + selection so the timeline can draw their cursors.
 //
+// LAZY BY DESIGN: this store is lightweight and pulls in NONE of the heavy
+// collab stack at import time. yjs / y-webrtc / the store binding / media sync
+// are dynamically imported only when the user actually starts or joins a session
+// (see `connect`). So a normal solo editing session never loads or runs the
+// multi-user machinery — nothing connects to signaling, nothing subscribes.
+//
 // Presence note: `peers` is kept as a STABLE Record keyed by clientId and only
 // the changed handler replaces it — components must derive arrays with useMemo
 // (never a fresh-array Zustand selector; that breaks useSyncExternalStore).
+
+// Minimal shape of the y-protocols Awareness we touch (typed locally so this
+// file doesn't import yjs).
+interface AwarenessLike {
+  clientID: number;
+  setLocalState: (state: Record<string, unknown>) => void;
+  setLocalStateField: (field: string, value: unknown) => void;
+  getStates: () => Map<number, Record<string, unknown>>;
+  on: (event: "change", cb: () => void) => void;
+  off: (event: "change", cb: () => void) => void;
+}
 
 export type CollabStatus = "idle" | "connecting" | "connected";
 
@@ -59,13 +73,17 @@ function randomName(): string {
 }
 
 // Live bookkeeping for the active session (not in the store — these are plain
-// mutable handles that the store actions wire up and tear down).
+// mutable handles that the store actions wire up and tear down). All references
+// to the heavy modules are captured here from the dynamic import in `connect`,
+// so `teardown` / `setSelfName` never need a static import of the collab stack.
 let unbind: (() => void) | null = null;
 let enableLocal: (() => void) | null = null;
 let unsubEditor: (() => void) | null = null;
 let awarenessHandler: (() => void) | null = null;
 let emptyRoomTimer: number | null = null;
 let lastPlayheadWrite = 0;
+let activeAwareness: AwarenessLike | null = null;
+let teardownSession: (() => void) | null = null; // destroySession + stopMediaSync
 
 const identity = loadIdentity();
 
@@ -96,8 +114,7 @@ export const useCollab = create<CollabState>((set, get) => ({
     const trimmed = name.trim() || randomName();
     localStorage.setItem("weedit.collab.name", trimmed);
     set({ selfName: trimmed });
-    const s = getSession();
-    if (s) s.provider.awareness.setLocalStateField("name", trimmed);
+    activeAwareness?.setLocalStateField("name", trimmed);
   },
 }));
 
@@ -110,13 +127,27 @@ async function connect(
   teardown();
   set({ status: "connecting", roomId, peers: {}, peerCount: 0 });
 
+  // Load the heavy collab stack on demand — this is the first point a normal
+  // editing session ever touches yjs / y-webrtc / WebRTC.
+  const [{ createSession, destroySession }, { bindEditorToDoc }, { startMediaSync, stopMediaSync }] =
+    await Promise.all([
+      import("@/lib/collab/collabDoc"),
+      import("@/lib/collab/bindStore"),
+      import("@/lib/collab/mediaSync"),
+    ]);
+
   const session = createSession(roomId);
   const bound = bindEditorToDoc(session.maps, isHost);
   unbind = bound.unbind;
   enableLocal = bound.enableLocal;
+  teardownSession = () => {
+    void stopMediaSync();
+    destroySession();
+  };
 
   // Seed our awareness state.
-  const aw = session.provider.awareness;
+  const aw = session.provider.awareness as unknown as AwarenessLike;
+  activeAwareness = aw;
   const { selfName, selfColor } = get();
   aw.setLocalState({
     name: selfName,
@@ -174,18 +205,18 @@ async function connect(
 }
 
 function teardown(): void {
-  void stopMediaSync();
   if (emptyRoomTimer != null) {
     clearTimeout(emptyRoomTimer);
     emptyRoomTimer = null;
   }
-  const s = getSession();
-  if (s && awarenessHandler) s.provider.awareness.off("change", awarenessHandler);
+  if (activeAwareness && awarenessHandler) activeAwareness.off("change", awarenessHandler);
   awarenessHandler = null;
+  activeAwareness = null;
   unsubEditor?.();
   unsubEditor = null;
   unbind?.();
   unbind = null;
   enableLocal = null;
-  destroySession();
+  teardownSession?.(); // stopMediaSync + destroySession (no-op before first connect)
+  teardownSession = null;
 }

@@ -1,11 +1,11 @@
 import { CheckCircle2, Download, Loader2 } from "lucide-react";
 import { useMemo } from "react";
-import { useMediaSync, type Transfer } from "@/lib/collab/mediaSync";
+import { useTransfers, type Transfer } from "@/state/transfers";
 
 // Floating, bottom-right toast that shows peer-to-peer media transfers while a
 // collaboration session is fetching files this peer doesn't have yet.
 export function MediaSyncIndicator() {
-  const transfersRecord = useMediaSync((s) => s.transfers);
+  const transfersRecord = useTransfers((s) => s.transfers);
   const transfers = useMemo(() => Object.values(transfersRecord), [transfersRecord]);
 
   if (transfers.length === 0) return null;

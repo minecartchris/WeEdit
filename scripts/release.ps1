@@ -120,9 +120,14 @@ finally {
 
 # --- 5. Locate the signed artifacts + build latest.json -------------------
 $bundleDir = Join-Path $RepoRoot 'src-tauri/target/release/bundle'
-$sigFiles = @(Get-ChildItem -Path $bundleDir -Recurse -Filter *.sig -ErrorAction SilentlyContinue)
+# Filenames embed the version as _<version>_ (e.g. WeEdit_0.0.12_x64-setup.exe).
+# Match on that so stale artifacts from earlier builds in the same bundle dir
+# can't get picked up alongside this version.
+$verTag = "*_${version}_*"
+$sigFiles = @(Get-ChildItem -Path $bundleDir -Recurse -Filter *.sig -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -like $verTag })
 if ($sigFiles.Count -eq 0) {
-    throw "No .sig files found under $bundleDir. Signing did not run -- check TAURI_SIGNING_PRIVATE_KEY and that the release config set createUpdaterArtifacts."
+    throw "No .sig files for version $version found under $bundleDir. Signing did not run -- check TAURI_SIGNING_PRIVATE_KEY and that the release config set createUpdaterArtifacts."
 }
 
 # Prefer the NSIS setup installer as the update artifact when present.
@@ -151,7 +156,8 @@ $latestPath = Join-Path $bundleDir 'latest.json'
 # and latest.json (the updater endpoint reads this from the "latest" release).
 $assets = New-Object System.Collections.Generic.List[string]
 $assets.Add($updaterArtifact.FullName)
-$msi = Get-ChildItem -Path $bundleDir -Recurse -Filter *.msi -ErrorAction SilentlyContinue | Select-Object -First 1
+$msi = Get-ChildItem -Path $bundleDir -Recurse -Filter *.msi -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -like $verTag } | Select-Object -First 1
 if ($msi) { $assets.Add($msi.FullName) }
 $assets.Add($latestPath)
 
@@ -164,8 +170,15 @@ if ($DryRun) {
 }
 
 # --- 6. Publish to GitHub -------------------------------------------------
-& gh release view $tag *> $null
+# `gh release view` exits non-zero and writes "release not found" to stderr
+# when the release doesn't exist yet. Under ErrorActionPreference=Stop that
+# wrapped stderr would terminate the script, so relax it for this probe and
+# rely solely on the exit code. (2>&1 | Out-Null keeps it quiet either way.)
+$prevEAP = $ErrorActionPreference
+$ErrorActionPreference = 'SilentlyContinue'
+& gh release view $tag 2>&1 | Out-Null
 $releaseExists = ($LASTEXITCODE -eq 0)
+$ErrorActionPreference = $prevEAP
 
 if ($releaseExists) {
     Write-Host "==> Release $tag exists -- uploading assets (clobbering)" -ForegroundColor Cyan

@@ -78,8 +78,14 @@ export async function loadConfig(): Promise<AppConfig> {
 
 export async function saveConfig(config: AppConfig): Promise<void> {
   const path = await getConfigPath();
+  // Merge over whatever's already on disk so partial writers don't clobber each
+  // other's keys. Integrations (Twitch/NAS/recent projects) and UI prefs
+  // (theme/units/shortcuts/panel sizes under `ui`) both write this file; without
+  // the merge, saving a recent project would wipe the saved theme back to system.
+  const existing = await loadConfig();
+  const merged: AppConfig = { ...existing, ...config, version: 1 };
   await invoke("write_project_file", {
     path,
-    content: JSON.stringify(config, null, 2),
+    content: JSON.stringify(merged, null, 2),
   });
 }

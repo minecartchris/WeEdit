@@ -136,6 +136,8 @@ function addPresetClip(preset: TextPreset | null) {
     xPct: preset?.xPct ?? 50,
     yPct: preset?.yPct ?? 50,
     scale: 1,
+    rotation: 0,
+    tilt: 0,
   };
   state.addClip(clip);
 }

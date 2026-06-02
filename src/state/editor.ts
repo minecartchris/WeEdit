@@ -542,6 +542,8 @@ export const useEditor = create<EditorState>((set, get) => ({
         xPct: 50,
         yPct: 50,
         scale: 1,
+        rotation: 0,
+        tilt: 0,
       };
       const newTrack: Track = {
         id: trackId,

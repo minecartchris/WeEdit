@@ -160,7 +160,10 @@ function VideoLayer({
 
   return (
     <>
-      <div data-cliplayer={clip.id} style={transformStyle(resolveTransform(clip, playheadSec))}>
+      <div
+        data-cliplayer={clip.id}
+        style={transformStyle(resolveTransform(clip, playheadSec), clip.rotation, clip.tilt)}
+      >
         <video
           ref={ref}
           src={convertFileSrc(media.src)}
@@ -248,7 +251,10 @@ function ExtractedAudioTrack({
 
 function ImageLayer({ media, clip, playheadSec }: { media: MediaItem; clip: MediaClip; playheadSec: number }) {
   return (
-    <div data-cliplayer={clip.id} style={transformStyle(resolveTransform(clip, playheadSec))}>
+    <div
+      data-cliplayer={clip.id}
+      style={transformStyle(resolveTransform(clip, playheadSec), clip.rotation, clip.tilt)}
+    >
       <img
         src={convertFileSrc(media.src)}
         alt=""
@@ -268,7 +274,7 @@ function TextLayer({ clip, playheadSec }: { clip: TextClip; playheadSec: number 
       style={{
         left: `${tf.xPct}%`,
         top: `${tf.yPct}%`,
-        transform: `translate(-50%, -50%) scale(${tf.scale})`,
+        transform: `perspective(1200px) translate(-50%, -50%) rotateX(${clip.tilt}deg) rotateZ(${clip.rotation}deg) scale(${tf.scale})`,
         transformOrigin: "center",
         fontFamily: clip.fontFamily,
         fontSize: `${clip.fontSizePx}px`,
@@ -287,17 +293,21 @@ function TextLayer({ clip, playheadSec }: { clip: TextClip; playheadSec: number 
   );
 }
 
-// Absolute, stage-sized box centered on (xPct,yPct) and scaled. Media fills it
-// with object-contain, so the default 50/50/scale-1 overlays the whole stage
-// exactly as before; changing the transform moves/zooms the layer.
-function transformStyle(t: { xPct: number; yPct: number; scale: number }): React.CSSProperties {
+// Absolute, stage-sized box centered on (xPct,yPct), scaled, rotated and tilted.
+// Media fills it with object-contain, so the default 50/50/scale-1/0°/0° overlays
+// the whole stage exactly as before; changing the transform moves/zooms/rotates.
+function transformStyle(
+  t: { xPct: number; yPct: number; scale: number },
+  rotation = 0,
+  tilt = 0,
+): React.CSSProperties {
   return {
     position: "absolute",
     left: `${t.xPct}%`,
     top: `${t.yPct}%`,
     width: "100%",
     height: "100%",
-    transform: `translate(-50%, -50%) scale(${t.scale})`,
+    transform: `perspective(1200px) translate(-50%, -50%) rotateX(${tilt}deg) rotateZ(${rotation}deg) scale(${t.scale})`,
     transformOrigin: "center",
   };
 }

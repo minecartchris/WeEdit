@@ -94,6 +94,10 @@ export interface Transform {
   xPct: number;
   yPct: number;
   scale: number;
+  /** In-plane rotation in degrees (rotateZ). */
+  rotation: number;
+  /** 3D forward/back tilt in degrees (rotateX, with perspective). */
+  tilt: number;
 }
 
 export interface MediaClip extends ClipBase, Transform {

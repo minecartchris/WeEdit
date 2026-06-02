@@ -72,6 +72,7 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 
 function TransformProps({ clip }: { clip: MediaClip | TextClip }) {
   const setTransform = useEditor((s) => s.setTransformAtPlayhead);
+  const updateClip = useEditor((s) => s.updateClip);
   const pushHistory = useEditor((s) => s.pushHistory);
   const unit = usePrefs((s) => s.positionUnit);
   const frameW = useEditor((s) => s.project.width);
@@ -115,6 +116,26 @@ function TransformProps({ clip }: { clip: MediaClip | TextClip }) {
         suffix="%"
         onCommitStart={pushHistory}
         onChange={(v) => setTransform(clip.id, { scale: v / 100 })}
+      />
+      <NumberField
+        label="Rotation"
+        value={Math.round(clip.rotation)}
+        min={-180}
+        max={180}
+        step={1}
+        suffix="°"
+        onCommitStart={pushHistory}
+        onChange={(v) => updateClip(clip.id, { rotation: v })}
+      />
+      <NumberField
+        label="Tilt (3D)"
+        value={Math.round(clip.tilt)}
+        min={-80}
+        max={80}
+        step={1}
+        suffix="°"
+        onCommitStart={pushHistory}
+        onChange={(v) => updateClip(clip.id, { tilt: v })}
       />
     </section>
   );

@@ -18,7 +18,9 @@ export function normalizeClip(clip: Clip): Clip {
   const xPct = typeof clip.xPct === "number" ? clip.xPct : 50;
   const yPct = typeof clip.yPct === "number" ? clip.yPct : 50;
   const scale = typeof clip.scale === "number" ? clip.scale : 1;
-  return { ...clip, xPct, yPct, scale } as Clip;
+  const rotation = typeof clip.rotation === "number" ? clip.rotation : 0;
+  const tilt = typeof clip.tilt === "number" ? clip.tilt : 0;
+  return { ...clip, xPct, yPct, scale, rotation, tilt } as Clip;
 }
 
 export function normalizeClips(
@@ -41,7 +43,10 @@ function lerp(a: number, b: number, f: number): number {
  * the static xPct/yPct/scale are used; otherwise the surrounding keyframes are
  * linearly interpolated (clamped to the first/last outside their range).
  */
-export function resolveTransform(clip: MediaClip | TextClip, playheadSec: number): Transform {
+/** The animated part of a transform (rotation/tilt are static, not keyframed). */
+export type PositionScale = Pick<Transform, "xPct" | "yPct" | "scale">;
+
+export function resolveTransform(clip: MediaClip | TextClip, playheadSec: number): PositionScale {
   const kfs = clip.keyframes;
   if (!kfs || kfs.length === 0) {
     return { xPct: clip.xPct, yPct: clip.yPct, scale: clip.scale };
@@ -66,7 +71,7 @@ export function resolveTransform(clip: MediaClip | TextClip, playheadSec: number
   return pickTransform(last);
 }
 
-function pickTransform(t: Transform): Transform {
+function pickTransform(t: PositionScale): PositionScale {
   return { xPct: t.xPct, yPct: t.yPct, scale: t.scale };
 }
 
@@ -116,6 +121,8 @@ export function makeClipFromMedia(
     xPct: 50,
     yPct: 50,
     scale: 1,
+    rotation: 0,
+    tilt: 0,
   };
 }
 

@@ -29,7 +29,10 @@
 param(
     [switch]$DryRun,
     [switch]$Push,
-    [string]$Notes
+    [string]$Notes,
+    # Path to the minisign private key. Used only if TAURI_SIGNING_PRIVATE_KEY
+    # isn't already set in the environment.
+    [string]$KeyPath = (Join-Path $HOME '.tauri/weedit.key')
 )
 
 $ErrorActionPreference = 'Stop'
@@ -51,8 +54,22 @@ Assert-Command node "Install Node.js."
 Assert-Command npm  "Install Node.js."
 Assert-Command gh   "Install the GitHub CLI: https://cli.github.com/"
 
+# Signing key. Prefer one already in the environment; otherwise load the key
+# file's contents into the env var Tauri's build reads.
 if (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
-    throw "TAURI_SIGNING_PRIVATE_KEY is not set. Set it to your minisign private key (file contents or a path) so the update artifacts are signed."
+    if (Test-Path $KeyPath) {
+        $env:TAURI_SIGNING_PRIVATE_KEY = [System.IO.File]::ReadAllText((Resolve-Path $KeyPath).Path)
+        Write-Host "==> Using signing key: $KeyPath" -ForegroundColor Cyan
+    } else {
+        throw "No signing key found. Set `$env:TAURI_SIGNING_PRIVATE_KEY (key contents or path), or put the key at $KeyPath."
+    }
+}
+
+# This key has no password. Tauri's build needs the password var to EXIST (as an
+# empty string) or it fails with a misleading 'incorrect password' error -- so
+# default it to empty unless the caller set a real password.
+if (-not (Test-Path Env:\TAURI_SIGNING_PRIVATE_KEY_PASSWORD)) {
+    $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = ""
 }
 
 & gh auth status *> $null

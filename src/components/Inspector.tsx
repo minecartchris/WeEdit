@@ -1,9 +1,18 @@
 import { AudioLines, Diamond, MousePointerSquareDashed, SlidersHorizontal, Volume2, VolumeX, X } from "lucide-react";
 import { NumberField } from "@/components/ui/NumberField";
-import { MAX_SCALE, MIN_SCALE, TEXT_CHAR_LIMIT, pctToPx, pxToPct, resolveTransform } from "@/lib/clips";
+import {
+  MAX_SCALE,
+  MAX_TRANSITION_SEC,
+  MIN_SCALE,
+  TEXT_CHAR_LIMIT,
+  pctToPx,
+  previousClipOnTrack,
+  pxToPct,
+  resolveTransform,
+} from "@/lib/clips";
 import { useEditor } from "@/state/editor";
 import { usePrefs } from "@/state/prefs";
-import type { AudioTrackInfo, Clip, MediaClip, TextClip } from "@/types";
+import type { AudioTrackInfo, Clip, MediaClip, TextClip, TransitionType } from "@/types";
 
 // Right-hand properties panel for the single selected clip. This is the home
 // for all clip editing — text content/style, opacity/volume, per-source audio
@@ -52,7 +61,62 @@ function ClipInspector({ clip }: { clip: Clip }) {
       {clip.kind === "text" ? <TextProps clip={clip} /> : <MediaProps clip={clip} />}
       {clip.kind !== "audio" && <TransformProps clip={clip} />}
       {clip.kind !== "audio" && <KeyframeProps clip={clip} />}
+      {(clip.kind === "video" || clip.kind === "image") && <TransitionProps clip={clip} />}
     </div>
+  );
+}
+
+function TransitionProps({ clip }: { clip: MediaClip }) {
+  const updateClip = useEditor((s) => s.updateClip);
+  const pushHistory = useEditor((s) => s.pushHistory);
+  const hasPrev = useEditor((s) => previousClipOnTrack(s.clips, clip) != null);
+  const tr = clip.transition;
+  const type: TransitionType | "none" = tr?.type ?? "none";
+  const dur = tr?.durationSec ?? 0.5;
+
+  const setType = (val: TransitionType | "none") => {
+    pushHistory();
+    if (val === "none") updateClip(clip.id, { transition: undefined });
+    else updateClip(clip.id, { transition: { type: val, durationSec: dur } });
+  };
+
+  return (
+    <section className="flex flex-col gap-3 border-t border-we-border pt-4">
+      <SectionTitle>Transition (in)</SectionTitle>
+      {!hasPrev ? (
+        <p className="text-[11px] text-we-muted leading-4">
+          Place this clip right after another clip on the same track to add a transition into it.
+        </p>
+      ) : (
+        <>
+          <label className="flex flex-col gap-1 text-xs text-we-ink">
+            <span className="text-we-muted">Type</span>
+            <select
+              value={type}
+              onChange={(e) => setType(e.target.value as TransitionType | "none")}
+              className="we-input"
+            >
+              <option value="none">None</option>
+              <option value="crossfade">Crossfade</option>
+              <option value="wipe">Wipe (left → right)</option>
+            </select>
+          </label>
+          {tr && (
+            <NumberField
+              label="Duration"
+              value={dur}
+              min={0.1}
+              max={MAX_TRANSITION_SEC}
+              step={0.1}
+              decimals={1}
+              suffix="s"
+              onCommitStart={pushHistory}
+              onChange={(v) => updateClip(clip.id, { transition: { ...tr, durationSec: v } })}
+            />
+          )}
+        </>
+      )}
+    </section>
   );
 }
 

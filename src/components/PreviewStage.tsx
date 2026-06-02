@@ -1,6 +1,6 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { MAX_SCALE, MIN_SCALE, resolveTransform } from "@/lib/clips";
+import { MAX_SCALE, MIN_SCALE, previousClipOnTrack, resolveTransform } from "@/lib/clips";
 import { useEditor } from "@/state/editor";
 import type { AspectRatio, Clip, MediaClip, MediaItem, TextClip } from "@/types";
 
@@ -23,34 +23,15 @@ export function PreviewStage({ aspect }: Props) {
   const clips = useEditor((s) => s.clips);
   const media = useEditor((s) => s.media);
 
-  // All visible (video/image) clips active at the playhead, one per video
-  // track, ordered back-to-front by zIndex. Rendering every layer (not just the
-  // topmost) lets a clip's opacity reveal the layers beneath it instead of black.
-  const activeVisuals = useMemo(() => {
-    const ascending = [...tracks]
-      .filter((t) => t.kind === "video")
-      .sort((a, b) => a.zIndex - b.zIndex);
-    const out: { clip: MediaClip; media: MediaItem; volume: number }[] = [];
-    for (const track of ascending) {
-      for (const cid of track.clipIds) {
-        const c = clips[cid];
-        if (!c || c.kind === "text") continue;
-        if (c.startSec <= playheadSec && playheadSec < c.startSec + c.durationSec) {
-          const m = media.find((mm) => mm.id === (c as MediaClip).mediaId);
-          if (m) {
-            const mc = c as MediaClip;
-            out.push({
-              clip: mc,
-              media: m,
-              volume: track.muted ? 0 : clamp01(mc.volume * track.volume),
-            });
-          }
-          break; // clips can't overlap on a single track
-        }
-      }
-    }
-    return out;
-  }, [tracks, clips, media, playheadSec]);
+  // All visible (video/image) layers to draw at the playhead, back-to-front by
+  // zIndex. One active clip per video track — plus, during a transition, the
+  // previous clip on that track as an "outgoing" layer blended underneath the
+  // incoming one. Rendering every layer (not just the topmost) also lets a
+  // clip's opacity reveal the layers beneath it instead of black.
+  const activeVisuals = useMemo(
+    () => collectActiveVisuals(tracks, clips, media, playheadSec),
+    [tracks, clips, media, playheadSec],
+  );
 
   const activeTexts: TextClip[] = useMemo(() => {
     const out: TextClip[] = [];
@@ -74,18 +55,27 @@ export function PreviewStage({ aspect }: Props) {
     <StageFrame aspect={aspect}>
       {isEmpty && <EmptyStage />}
 
-      {activeVisuals.map(({ clip, media: m, volume }) =>
+      {activeVisuals.map(({ key, clip, media: m, volume, extraOpacity, clipStyle }) =>
         m.kind === "video" ? (
           <VideoLayer
-            key={clip.id}
+            key={key}
             media={m}
             clip={clip}
             playheadSec={playheadSec}
             isPlaying={isPlaying}
             volume={volume}
+            extraOpacity={extraOpacity}
+            clipStyle={clipStyle}
           />
         ) : (
-          <ImageLayer key={clip.id} media={m} clip={clip} playheadSec={playheadSec} />
+          <ImageLayer
+            key={key}
+            media={m}
+            clip={clip}
+            playheadSec={playheadSec}
+            extraOpacity={extraOpacity}
+            clipStyle={clipStyle}
+          />
         ),
       )}
 
@@ -108,12 +98,16 @@ function VideoLayer({
   playheadSec,
   isPlaying,
   volume,
+  extraOpacity = 1,
+  clipStyle,
 }: {
   media: MediaItem;
   clip: MediaClip;
   playheadSec: number;
   isPlaying: boolean;
   volume: number;
+  extraOpacity?: number;
+  clipStyle?: React.CSSProperties;
 }) {
   const ref = useRef<HTMLVideoElement>(null);
   const multiTrack = (media.audioTracks?.length ?? 0) > 0;
@@ -162,7 +156,7 @@ function VideoLayer({
     <>
       <div
         data-cliplayer={clip.id}
-        style={transformStyle(resolveTransform(clip, playheadSec), clip.rotation, clip.tilt)}
+        style={{ ...transformStyle(resolveTransform(clip, playheadSec), clip.rotation, clip.tilt), ...clipStyle }}
       >
         <video
           ref={ref}
@@ -171,7 +165,7 @@ function VideoLayer({
           preload="auto"
           crossOrigin="anonymous"
           className="w-full h-full object-contain"
-          style={{ opacity: clip.opacity }}
+          style={{ opacity: clip.opacity * extraOpacity }}
         />
       </div>
       {multiTrack &&
@@ -249,17 +243,29 @@ function ExtractedAudioTrack({
   );
 }
 
-function ImageLayer({ media, clip, playheadSec }: { media: MediaItem; clip: MediaClip; playheadSec: number }) {
+function ImageLayer({
+  media,
+  clip,
+  playheadSec,
+  extraOpacity = 1,
+  clipStyle,
+}: {
+  media: MediaItem;
+  clip: MediaClip;
+  playheadSec: number;
+  extraOpacity?: number;
+  clipStyle?: React.CSSProperties;
+}) {
   return (
     <div
       data-cliplayer={clip.id}
-      style={transformStyle(resolveTransform(clip, playheadSec), clip.rotation, clip.tilt)}
+      style={{ ...transformStyle(resolveTransform(clip, playheadSec), clip.rotation, clip.tilt), ...clipStyle }}
     >
       <img
         src={convertFileSrc(media.src)}
         alt=""
         className="w-full h-full object-contain"
-        style={{ opacity: clip.opacity }}
+        style={{ opacity: clip.opacity * extraOpacity }}
       />
     </div>
   );
@@ -538,6 +544,79 @@ function EmptyStage() {
 
 function clamp01(v: number) {
   return Math.max(0, Math.min(1, v));
+}
+
+interface VisualEntry {
+  key: string;
+  clip: MediaClip;
+  media: MediaItem;
+  volume: number;
+  /** Multiplies clip.opacity (crossfade ramp). */
+  extraOpacity: number;
+  /** Extra style on the layer box (e.g. wipe clip-path). */
+  clipStyle?: React.CSSProperties;
+}
+
+// One active visual layer per video track, plus the previous clip as an
+// "outgoing" layer during a transition (blended under the incoming one).
+function collectActiveVisuals(
+  tracks: ReturnType<typeof useEditor.getState>["tracks"],
+  clips: ReturnType<typeof useEditor.getState>["clips"],
+  media: ReturnType<typeof useEditor.getState>["media"],
+  playheadSec: number,
+): VisualEntry[] {
+  const ascending = [...tracks]
+    .filter((t) => t.kind === "video")
+    .sort((a, b) => a.zIndex - b.zIndex);
+  const out: VisualEntry[] = [];
+
+  for (const track of ascending) {
+    let active: MediaClip | null = null;
+    for (const cid of track.clipIds) {
+      const c = clips[cid];
+      if (!c || c.kind === "text") continue;
+      if (c.startSec <= playheadSec && playheadSec < c.startSec + c.durationSec) {
+        active = c as MediaClip;
+        break;
+      }
+    }
+    if (!active) continue;
+    const mActive = media.find((m) => m.id === active!.mediaId);
+    if (!mActive) continue;
+    const vol = (c: MediaClip) => (track.muted ? 0 : clamp01(c.volume * track.volume));
+
+    const tr = active.transition;
+    const local = playheadSec - active.startSec;
+    if (tr && tr.durationSec > 0 && local >= 0 && local < tr.durationSec) {
+      const prev = previousClipOnTrack(clips, active);
+      const mPrev = prev && prev.kind !== "text" ? media.find((m) => m.id === (prev as MediaClip).mediaId) : null;
+      if (prev && mPrev) {
+        const p = local / tr.durationSec; // incoming progress 0..1
+        // Outgoing (behind): the previous clip's source keeps playing past its
+        // cut into the lead-in window, fading out.
+        out.push({
+          key: `${active.id}-out`,
+          clip: prev as MediaClip,
+          media: mPrev,
+          volume: vol(prev as MediaClip) * (1 - p),
+          extraOpacity: 1 - p,
+        });
+        // Incoming (front): crossfade ramps opacity; wipe reveals left→right.
+        out.push({
+          key: active.id,
+          clip: active,
+          media: mActive,
+          volume: vol(active) * p,
+          extraOpacity: tr.type === "crossfade" ? p : 1,
+          clipStyle: tr.type === "wipe" ? { clipPath: `inset(0 ${(1 - p) * 100}% 0 0)` } : undefined,
+        });
+        continue;
+      }
+    }
+
+    out.push({ key: active.id, clip: active, media: mActive, volume: vol(active), extraOpacity: 1 });
+  }
+  return out;
 }
 
 function collectActiveAudios(

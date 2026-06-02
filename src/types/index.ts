@@ -72,6 +72,15 @@ export interface Keyframe {
   scale: number;
 }
 
+/** Cross-clip transition types (blended over the incoming clip's lead-in). */
+export type TransitionType = "crossfade" | "wipe";
+
+export interface ClipTransition {
+  type: TransitionType;
+  /** Lead-in length in seconds — how long the blend with the previous clip lasts. */
+  durationSec: number;
+}
+
 export interface ClipBase {
   id: string;
   trackId: string;
@@ -83,6 +92,11 @@ export interface ClipBase {
   sourceInSec: number;
   /** Optional X/Y/Zoom keyframes, sorted by tSec. */
   keyframes?: Keyframe[];
+  /**
+   * Optional transition INTO this clip from the previous clip on the same
+   * track. During the first `durationSec` the preview cross-renders the two.
+   */
+  transition?: ClipTransition;
 }
 
 /**

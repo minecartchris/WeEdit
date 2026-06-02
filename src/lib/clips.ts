@@ -9,6 +9,31 @@ export const TEXT_CHAR_LIMIT = 200;
 export const MIN_SCALE = 0.1;
 export const MAX_SCALE = 4;
 
+/** Max length of a cross-clip transition, in seconds. */
+export const MAX_TRANSITION_SEC = 5;
+
+/**
+ * The clip immediately before `clip` on the same track — the nearest clip whose
+ * end is at or before this clip's start. Used as the "outgoing" side of a
+ * transition.
+ */
+export function previousClipOnTrack(
+  clips: Record<string, Clip>,
+  clip: Clip,
+): Clip | null {
+  let best: Clip | null = null;
+  let bestEnd = -Infinity;
+  for (const c of Object.values(clips)) {
+    if (c.id === clip.id || c.trackId !== clip.trackId) continue;
+    const end = c.startSec + c.durationSec;
+    if (end <= clip.startSec + 1e-3 && end > bestEnd) {
+      best = c;
+      bestEnd = end;
+    }
+  }
+  return best;
+}
+
 /**
  * Backfill transform fields on a clip loaded from disk. Projects saved before
  * positioning existed have no xPct/yPct/scale; default them to centered /

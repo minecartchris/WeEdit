@@ -12,7 +12,8 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "npm run fetch-binaries && tauri build",
-    "tauri:build:release": "npm run fetch-binaries && tauri build --config src-tauri/tauri.release.conf.json"
+    "tauri:build:release": "npm run fetch-binaries && tauri build --config src-tauri/tauri.release.conf.json",
+    "release": "powershell -ExecutionPolicy Bypass -File scripts/release.ps1"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

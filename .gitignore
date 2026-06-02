@@ -43,5 +43,8 @@ src-tauri/binaries/ffprobe-*
 .env.local
 *.local.json
 
+# Personal project notes (private; not for the repo)
+NOTES.md
+
 # Generated TypeScript build info
 *.tsbuildinfo

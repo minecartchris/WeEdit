@@ -180,7 +180,10 @@ export function Timeline() {
         className="flex-1 min-h-0 overflow-auto"
         style={{ scrollbarGutter: "stable" }}
       >
-        <div className="relative" style={{ width: SCROLL_INNER_WIDTH }}>
+        {/* minWidth 100% so when the content is narrower than the panel (zoomed
+            out) the lanes still fill the full width instead of leaving an empty
+            gap on the right. */}
+        <div className="relative" style={{ width: SCROLL_INNER_WIDTH, minWidth: "100%" }}>
           {/* Ruler row */}
           <div className="flex sticky top-0 z-30">
             <div className="w-40 shrink-0 sticky left-0 z-30 border-r border-b border-we-border bg-we-trackHead h-7" />

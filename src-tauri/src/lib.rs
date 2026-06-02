@@ -87,6 +87,109 @@ fn path_exists(path: String) -> bool {
     Path::new(&path).exists()
 }
 
+// ── Peer-to-peer media sync (collaboration) ──────────────────────────────────
+//
+// Files referenced by a project are content-addressed by streamed SHA-256 so a
+// collaborator can recognise media it already has and fetch what it lacks over
+// the WebRTC data path in fixed-size chunks. Chunks cross the IPC boundary as
+// base64 strings (compact vs. a JSON number array).
+
+/// Streamed SHA-256 of a file, hex-encoded. Reads in 1 MiB blocks so hashing a
+/// multi-GB VOD doesn't load it all into memory.
+#[tauri::command]
+async fn hash_file(path: String) -> Result<String, String> {
+    run_blocking("hash_file", move || {
+        use sha2::{Digest, Sha256};
+        use std::io::Read;
+        let file = fs::File::open(&path).map_err(|e| format!("open failed: {e}"))?;
+        let mut reader = BufReader::new(file);
+        let mut hasher = Sha256::new();
+        let mut buf = vec![0u8; 1024 * 1024];
+        loop {
+            let n = reader.read(&mut buf).map_err(|e| format!("read failed: {e}"))?;
+            if n == 0 {
+                break;
+            }
+            hasher.update(&buf[..n]);
+        }
+        Ok(format!("{:x}", hasher.finalize()))
+    })
+    .await
+}
+
+/// Byte length of a file (manifest size for transfers / progress).
+#[tauri::command]
+fn file_size(path: String) -> Result<u64, String> {
+    fs::metadata(&path).map(|m| m.len()).map_err(|e| format!("stat failed: {e}"))
+}
+
+/// Read `length` bytes at `offset` and return them base64-encoded. EOF yields a
+/// shorter (possibly empty) result.
+#[tauri::command]
+async fn read_file_chunk(path: String, offset: u64, length: u32) -> Result<String, String> {
+    run_blocking("read_file_chunk", move || {
+        use base64::Engine;
+        use std::io::{Read, Seek, SeekFrom};
+        let mut file = fs::File::open(&path).map_err(|e| format!("open failed: {e}"))?;
+        file.seek(SeekFrom::Start(offset)).map_err(|e| format!("seek failed: {e}"))?;
+        let mut buf = vec![0u8; length as usize];
+        let mut read = 0usize;
+        while read < buf.len() {
+            let n = file.read(&mut buf[read..]).map_err(|e| format!("read failed: {e}"))?;
+            if n == 0 {
+                break;
+            }
+            read += n;
+        }
+        buf.truncate(read);
+        Ok(base64::engine::general_purpose::STANDARD.encode(&buf))
+    })
+    .await
+}
+
+/// Delete a file if it exists (no error when already absent). Used to clear a
+/// stale partial transfer before re-fetching.
+#[tauri::command]
+fn remove_file(path: String) -> Result<(), String> {
+    match fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("remove failed: {e}")),
+    }
+}
+
+/// Rename / move a file (atomic finalize of a completed `.part` transfer).
+#[tauri::command]
+fn rename_path(from: String, to: String) -> Result<(), String> {
+    if let Some(parent) = Path::new(&to).parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("mkdir failed: {e}"))?;
+    }
+    fs::rename(&from, &to).map_err(|e| format!("rename failed: {e}"))
+}
+
+/// Append a base64 chunk to a file (creating it + parent dirs on first write).
+/// Used by the receiving peer to assemble a fetched media file in its cache.
+#[tauri::command]
+async fn append_file_chunk(path: String, data_base64: String) -> Result<(), String> {
+    run_blocking("append_file_chunk", move || {
+        use base64::Engine;
+        use std::io::Write;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(data_base64.as_bytes())
+            .map_err(|e| format!("base64 decode failed: {e}"))?;
+        if let Some(parent) = Path::new(&path).parent() {
+            fs::create_dir_all(parent).map_err(|e| format!("mkdir failed: {e}"))?;
+        }
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .map_err(|e| format!("open failed: {e}"))?;
+        file.write_all(&bytes).map_err(|e| format!("write failed: {e}"))
+    })
+    .await
+}
+
 #[derive(serde::Serialize)]
 struct DirEntry {
     name: String,
@@ -1175,6 +1278,12 @@ pub fn run() {
             write_project_file,
             ensure_dir,
             path_exists,
+            hash_file,
+            file_size,
+            read_file_chunk,
+            append_file_chunk,
+            remove_file,
+            rename_path,
             list_directory,
             smb_authenticate,
             ytdlp_check,

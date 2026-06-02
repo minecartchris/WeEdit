@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { bindEditorToDoc } from "@/lib/collab/bindStore";
 import { createSession, destroySession, getSession } from "@/lib/collab/collabDoc";
+import { startMediaSync, stopMediaSync } from "@/lib/collab/mediaSync";
 import { useEditor } from "@/state/editor";
 
 // Collaboration session state + live presence ("awareness"). Orchestrates the
@@ -156,6 +157,11 @@ async function connect(
   };
   aw.on("change", awarenessHandler);
 
+  // Peer-to-peer media transfer so previews resolve on every peer.
+  void startMediaSync(roomId, session.provider).catch((err) =>
+    console.error("Failed to start media sync:", err),
+  );
+
   set({ status: "connected" });
 
   // If we joined an empty room (host never seeded), start contributing after a
@@ -168,6 +174,7 @@ async function connect(
 }
 
 function teardown(): void {
+  void stopMediaSync();
   if (emptyRoomTimer != null) {
     clearTimeout(emptyRoomTimer);
     emptyRoomTimer = null;

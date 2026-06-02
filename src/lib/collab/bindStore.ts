@@ -27,7 +27,7 @@ export function pushAllToDoc(maps: CollabMaps): void {
     maps.project.set("data", s.project);
     maps.project.set("trackOrder", s.tracks.map((t) => t.id));
     reconcileRecord(maps.clips, s.clips);
-    reconcileList(maps.media, Object.fromEntries(s.media.map((m) => [m.id, m])));
+    reconcileMedia(maps.media, s.media);
     reconcileList(maps.tracks, Object.fromEntries(s.tracks.map((t) => [t.id, t])));
   }, LOCAL_ORIGIN);
 }
@@ -48,6 +48,20 @@ function reconcileList(map: Y.Map<unknown>, byId: Record<string, unknown>): void
   reconcileRecord(map, byId as Record<string, { id: string }>);
 }
 
+// Media files are identified across peers by contentHash; `src` (and the
+// extracted-audio filepaths) are per-peer local paths that must never propagate.
+// We always store media in the doc with those stripped, so each peer keeps its
+// own local resolution and src-only changes never cause doc churn.
+function stripMediaLocal(m: MediaItem): MediaItem {
+  return { ...m, src: "", thumbnail: m.thumbnail, audioTracks: undefined };
+}
+
+function reconcileMedia(map: Y.Map<unknown>, media: MediaItem[]): void {
+  const byId: Record<string, MediaItem> = {};
+  for (const m of media) byId[m.id] = stripMediaLocal(m);
+  reconcileRecord(map, byId);
+}
+
 // ── store → doc ──────────────────────────────────────────────────────────────
 
 function pushChangesToDoc(maps: CollabMaps): void {
@@ -57,7 +71,7 @@ function pushChangesToDoc(maps: CollabMaps): void {
     const order = s.tracks.map((t) => t.id);
     if (!jsonEq(maps.project.get("trackOrder"), order)) maps.project.set("trackOrder", order);
     reconcileRecord(maps.clips, s.clips);
-    reconcileList(maps.media, Object.fromEntries(s.media.map((m) => [m.id, m])));
+    reconcileMedia(maps.media, s.media);
     reconcileList(maps.tracks, Object.fromEntries(s.tracks.map((t) => [t.id, t])));
   }, LOCAL_ORIGIN);
 }
@@ -70,7 +84,18 @@ function rebuildStoreFromDoc(maps: CollabMaps): boolean {
 
   const order = (maps.project.get("trackOrder") as string[] | undefined) ?? [];
   const clips = normalizeClips(Object.fromEntries(maps.clips.entries()) as Record<string, Clip>);
-  const media = [...maps.media.values()] as MediaItem[];
+
+  // Merge remote media metadata with our LOCAL file resolution. Keep our own
+  // src / thumbnail / audioTracks for media we already have; blank src for new
+  // remote media so the media-sync layer fetches the bytes by contentHash.
+  const localMediaById = new Map(useEditor.getState().media.map((m) => [m.id, m]));
+  const media = ([...maps.media.values()] as MediaItem[]).map((remote) => {
+    const local = localMediaById.get(remote.id);
+    if (local && local.src) {
+      return { ...remote, src: local.src, thumbnail: local.thumbnail ?? remote.thumbnail, audioTracks: local.audioTracks };
+    }
+    return { ...remote, src: local?.src ?? "", audioTracks: undefined };
+  });
 
   const tracksById = new Map<string, Track>();
   for (const [id, t] of maps.tracks.entries()) tracksById.set(id, t as Track);

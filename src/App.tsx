@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { Inspector } from "@/components/Inspector";
 import { MediaLibrary } from "@/components/MediaLibrary";
+import { MediaSyncIndicator } from "@/components/MediaSyncIndicator";
 import { Preview } from "@/components/Preview";
 import { Sidebar } from "@/components/Sidebar";
 import { Timeline } from "@/components/Timeline";
@@ -78,6 +79,7 @@ export default function App() {
       <div style={{ height: timelinePx }} className="shrink-0 min-h-0 flex">
         <Timeline />
       </div>
+      <MediaSyncIndicator />
     </div>
   );
 }

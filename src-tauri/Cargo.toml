@@ -30,3 +30,6 @@ tauri-plugin-process = "2"
 # the various CDNs Pexels (and future stock providers) redirect to.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "gzip", "brotli"] }
 tokio = { version = "1", features = ["fs"] }
+# Content-addressing + chunk encoding for peer-to-peer media sync (collab).
+sha2 = "0.10"
+base64 = "0.22"

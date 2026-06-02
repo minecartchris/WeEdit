@@ -41,6 +41,17 @@ export interface MediaItem {
    */
   audioTracks?: AudioTrackInfo[];
   importedAt: number;
+  /**
+   * Content hash (streamed sha256) of the source file. The cross-peer identity
+   * for collaboration: a collaborator matches this against files it already has
+   * and fetches the bytes peer-to-peer when it doesn't. Computed lazily once a
+   * session starts. Undefined for media that hasn't been hashed yet.
+   */
+  contentHash?: string;
+  /** Source file size in bytes (transfer manifest / progress). */
+  size?: number;
+  /** Source file extension without the dot (e.g. "mp4") — names the cache file. */
+  ext?: string;
 }
 
 export type TrackKind = "video" | "audio" | "text";

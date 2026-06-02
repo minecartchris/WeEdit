@@ -90,12 +90,13 @@ if (-not $Notes) { $Notes = "Automated build of commit $shortSha." }
 
 Write-Host "==> Releasing $version (tag $tag, commit $shortSha) to $repo" -ForegroundColor Cyan
 
-# --- 3. Make sure the commit exists on the remote (tags must reference it) -
+# --- 3. Make sure the commit exists on the remote (tags must reference it).
+# A dry run never publishes, so it doesn't need the commit pushed.
 if ($Push) {
     Write-Host "==> Pushing HEAD to origin" -ForegroundColor Cyan
     & git push origin HEAD
     if ($LASTEXITCODE -ne 0) { throw "git push failed." }
-} else {
+} elseif (-not $DryRun) {
     $onRemote = (& git branch -r --contains HEAD) -join ''
     if (-not $onRemote.Trim()) {
         throw "This commit isn't on the remote yet, so GitHub can't tag it. Push it first (git push origin HEAD) or re-run with -Push. Pushing main also triggers the CI release."

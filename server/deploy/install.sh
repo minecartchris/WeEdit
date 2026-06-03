@@ -62,10 +62,26 @@ nginx -t
 systemctl reload nginx
 
 LAN_IP="$(hostname -I | awk '{print $1}')"
+
+# Wait for the server to actually bind before health-checking (Type=simple
+# returns from `restart` as soon as the process forks, a beat before it listens).
+echo "==> Waiting for the signaling server to come up"
+health=""
+for _ in $(seq 1 15); do
+  health="$(curl -fs http://127.0.0.1:4444/health || true)"
+  [ -n "$health" ] && break
+  sleep 0.5
+done
+if [ -z "$health" ]; then
+  echo "!! Server did not respond on 127.0.0.1:4444. Check why:"
+  echo "     systemctl --no-pager status weedit-signaling"
+  echo "     journalctl -u weedit-signaling -n 40 --no-pager"
+fi
+
 echo
 echo "==> Done. TLS is handled by Cloudflare — no cert installed here."
 echo
-echo "    Local check:   $(curl -s http://127.0.0.1:4444/health || echo '(node not responding)')"
+echo "    Local check:   ${health:-(node not responding — see above)}"
 echo "    LAN check:     http://${LAN_IP}:4444/health     (node, direct)"
 echo "    Origin check:  http://${LAN_IP}:8443/health     (through nginx :8443)"
 echo

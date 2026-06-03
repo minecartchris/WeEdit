@@ -25,7 +25,10 @@ ProtectHome=true
 ReadWritePaths=
 ProtectKernelTunables=true
 ProtectControlGroups=true
-RestrictAddressFamilies=AF_INET AF_INET6
+# AF_UNIX/AF_NETLINK included because Node/libuv can need them at startup
+# (interface enumeration, internal pipes); without them the process can fail
+# to start under the sandbox.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
 
 [Install]
 WantedBy=multi-user.target

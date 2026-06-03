@@ -164,7 +164,7 @@ export function Timeline() {
   }, []);
 
   return (
-    <section className="flex flex-col min-h-0 h-full bg-we-panel border-t border-we-border min-w-0">
+    <section className="flex-1 w-full flex flex-col min-h-0 h-full bg-we-panel border-t border-we-border min-w-0">
       <TimelineToolbar
         timecode={`${totalDisplay} / ${totalLength}`}
         pxPerSec={pxPerSec}

@@ -6,7 +6,12 @@
 // peer-to-peer. The public yjs signaling servers proved unreliable ("connected"
 // but peers never found each other), so this points at the self-hosted server.
 // Deploy it from the `server/` folder in this repo.
-export const SIGNALING = ["wss://weedit.minecartchris.cc"];
+//
+// Talks to the signaling server on port 4444 directly (not the :80 nginx hop).
+// `wss://` assumes TLS is terminated on 4444 (Cloudflare edge cert / tunnel). If
+// you connect straight to the node server with no TLS in front, use
+// `ws://weedit.minecartchris.cc:4444` instead.
+export const SIGNALING = ["wss://weedit.minecartchris.cc:4444"];
 
 // ICE servers for the peer connections. STUN lets peers discover their public
 // address so they can connect through most home routers without port

@@ -7,8 +7,12 @@
 #   sudo DOMAIN=weedit.example.com bash deploy/install.sh
 #
 # Idempotent: safe to re-run after pulling a new signaling.mjs (it re-copies,
-# reinstalls deps, and restarts the service). Point your DNS A/AAAA record at
-# this VM and open ports 80/443 before running, so the TLS step can succeed.
+# reinstalls deps, and restarts the service).
+#
+# TLS is handled by Cloudflare at the edge — this sets up nginx on plain HTTP:80
+# as the Cloudflare origin. No certbot. Make sure the hostname is a proxied
+# (orange-cloud) record in Cloudflare and the origin is reachable (port-forward
+# 80 to this VM, or a Cloudflare Tunnel).
 
 set -euo pipefail
 
@@ -52,24 +56,22 @@ echo "==> Configuring nginx for ${DOMAIN}"
 sed "s/weedit\.minecartchris\.cc/${DOMAIN}/g" \
   "$SRC_DIR/deploy/nginx-weedit.conf" > /etc/nginx/sites-available/weedit
 ln -sf /etc/nginx/sites-available/weedit /etc/nginx/sites-enabled/weedit
+# Disable the default site so it doesn't shadow ours on port 80.
+rm -f /etc/nginx/sites-enabled/default
 nginx -t
 systemctl reload nginx
 
-echo "==> Requesting a TLS certificate (certbot)"
-if apt-get install -y certbot python3-certbot-nginx; then
-  if certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos \
-       --register-unsafely-without-email --redirect; then
-    systemctl reload nginx
-  else
-    echo "!! certbot did not complete (DNS not pointed here yet, or rate-limited)."
-    echo "   Re-run once DNS resolves: sudo certbot --nginx -d ${DOMAIN}"
-  fi
-fi
-
+LAN_IP="$(hostname -I | awk '{print $1}')"
 echo
-echo "==> Done. Health check:"
-curl -s "http://127.0.0.1:4444/health" || true
+echo "==> Done. TLS is handled by Cloudflare — no cert installed here."
+echo
+echo "    Local check:   $(curl -s http://127.0.0.1:4444/health || echo '(node not responding)')"
+echo "    LAN check:     http://${LAN_IP}:4444/health   (node, direct)"
+echo "    Origin check:  http://${LAN_IP}/health        (through nginx :80)"
 echo
 echo "    Service:  systemctl status weedit-signaling"
 echo "    Logs:     journalctl -u weedit-signaling -f"
-echo "    Public:   https://${DOMAIN}/health"
+echo
+echo "Cloudflare: point ${DOMAIN} at this origin (proxied / orange cloud) and set"
+echo "SSL/TLS mode to Flexible. The origin must be reachable from Cloudflare —"
+echo "forward port 80 to this VM, or run a Cloudflare Tunnel to localhost:80."

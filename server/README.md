@@ -42,10 +42,33 @@ cd server && npm install --omit=dev && node signaling.mjs
 The manual steps below are the same thing broken out, if you'd rather do it by
 hand or the script hits something specific to your box.
 
+## TLS / Cloudflare
+
+**Cloudflare terminates TLS at its edge**, so there's no certificate to manage on
+the VM — nginx serves the origin over plain HTTP on port 80. In the Cloudflare
+dashboard:
+
+1. Make `weedit.minecartchris.cc` a **proxied (orange-cloud)** record pointing at
+   the origin.
+2. Set **SSL/TLS mode → Flexible** (edge → origin over HTTP:80).
+3. Cloudflare proxies WebSockets automatically, so `wss://weedit.minecartchris.cc`
+   reaches the origin as a normal `ws` upgrade — nothing extra to enable.
+
+Cloudflare's orange-cloud proxy can only reach standard origin ports (80/443/…),
+**not 4444** — that's why nginx fronts the node server on :80.
+
+The origin has to be reachable *from Cloudflare*. Since this VM is on a private
+LAN (e.g. `192.168.1.242`), use one of:
+
+- **Cloudflare Tunnel** (no port forwarding — fits the rest of WeEdit): install
+  `cloudflared`, then `cloudflared tunnel --url http://localhost:80` (or a named
+  tunnel) and route the hostname to it.
+- **Port forward** 80 on your router to this VM, with Cloudflare DNS pointed at
+  your public IP.
+
 ## Deploy on a Debian VM (with nginx) — manual
 
-Assumes a fresh Debian and that DNS for `weedit.minecartchris.cc` already points
-an A/AAAA record at the VM's public IP, and ports 80/443 are open.
+These are the same steps `install.sh` runs, broken out.
 
 ### 1. Install Node.js + nginx
 
@@ -79,27 +102,28 @@ sudo cp deploy/weedit-signaling.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now weedit-signaling
 
-# Verify it's up on loopback:
+# Verify it's up (binds 0.0.0.0:4444 — reachable on the LAN too):
 curl -s http://127.0.0.1:4444/health   # -> {"ok":true,"rooms":0,"clients":0}
 sudo systemctl status weedit-signaling
 ```
 
-### 4. Front it with nginx + TLS
+### 4. Front it with nginx (Cloudflare provides TLS)
 
 ```bash
 sudo cp deploy/nginx-weedit.conf /etc/nginx/sites-available/weedit
-sudo ln -s /etc/nginx/sites-available/weedit /etc/nginx/sites-enabled/weedit
+sudo ln -sf /etc/nginx/sites-available/weedit /etc/nginx/sites-enabled/weedit
+sudo rm -f /etc/nginx/sites-enabled/default   # don't let it shadow ours on :80
 sudo nginx -t && sudo systemctl reload nginx
-
-# Get a Let's Encrypt cert (rewrites the site to add the :443 ssl block):
-sudo apt install -y certbot python3-certbot-nginx
-sudo certbot --nginx -d weedit.minecartchris.cc
-sudo systemctl reload nginx
 ```
+
+No certbot — see the **TLS / Cloudflare** section above.
 
 ### 5. Test
 
-- Browser: open `https://weedit.minecartchris.cc/health` → JSON with `ok: true`.
+- Direct (LAN): `http://<vm-ip>:4444/health` → JSON with `ok: true`.
+- Through nginx: `http://<vm-ip>/health` (port 80, the Cloudflare origin).
+- Public: `https://weedit.minecartchris.cc/health` once Cloudflare is pointed at
+  the origin.
 - App: launch WeEdit on two machines, **Start a session** on one, copy the code,
   **Join** on the other. The collaborate button should show `2`, and each peer's
   playhead should appear on the other's timeline.
@@ -119,8 +143,9 @@ npx wscat -c wss://weedit.minecartchris.cc
 - **Logs:** `journalctl -u weedit-signaling -f`
 - **Restart:** `sudo systemctl restart weedit-signaling`
 - **Update:** copy a new `signaling.mjs`, then `sudo systemctl restart weedit-signaling`
-- **Port:** defaults to `127.0.0.1:4444`; change via `Environment=PORT=` in the
-  unit file (keep it on loopback — nginx is the public face).
+- **Bind address / port:** defaults to `0.0.0.0:4444` (reachable on the LAN).
+  Change via `Environment=HOST=`/`PORT=` in the unit file; set `HOST=127.0.0.1`
+  if you want only a local nginx proxy to reach it.
 - **Resource use:** negligible. It holds a WebSocket per online collaborator and
   forwards a handful of tiny handshake messages per session.
 

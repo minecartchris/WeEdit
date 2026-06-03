@@ -11,7 +11,9 @@ Group=weedit
 WorkingDirectory=/opt/weedit-signaling
 ExecStart=/usr/bin/node /opt/weedit-signaling/signaling.mjs
 Environment=PORT=4444
-Environment=HOST=127.0.0.1
+# 0.0.0.0 = reachable on the LAN / via a tunnel. Set to 127.0.0.1 if you want
+# only a local nginx reverse proxy to be able to reach it.
+Environment=HOST=0.0.0.0
 Restart=on-failure
 RestartSec=2
 

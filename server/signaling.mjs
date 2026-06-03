@@ -22,7 +22,10 @@ import http from "node:http";
 import { WebSocketServer } from "ws";
 
 const PORT = Number(process.env.PORT) || 4444;
-const HOST = process.env.HOST || "127.0.0.1";
+// Bind on all interfaces by default so the server is reachable on the LAN /
+// behind a tunnel without extra config. Set HOST=127.0.0.1 to keep it private
+// (e.g. when nginx on the same box is the only thing that should reach it).
+const HOST = process.env.HOST || "0.0.0.0";
 const PING_TIMEOUT_MS = 30000;
 
 const wss = new WebSocketServer({ noServer: true });

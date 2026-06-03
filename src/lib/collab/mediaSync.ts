@@ -20,8 +20,13 @@ import type { MediaItem } from "@/types";
 // files you actually need), cached on disk, and a shared NAS remains the fast
 // path. Use it for clips and modest assets; expect patience on huge sources.
 
-const CHUNK_SIZE = 64 * 1024;        // bytes per chunk
+const CHUNK_SIZE = 16 * 1024;        // bytes per chunk (kept well under the WebRTC
+                                     // data-channel message ceiling once base64'd)
 const SERVE_WINDOW = 24;             // max outstanding (unconsumed) chunks in flight
+
+// Diagnostic logging for the P2P media transfer. Visible in DevTools on both
+// peers so a stalled transfer can be traced (discovery vs request vs chunks).
+const log = (...args: unknown[]) => console.log("[mediaSync]", ...args);
 
 interface RequestRec {
   hash: string;
@@ -77,6 +82,7 @@ export async function startMediaSync(roomId: string, mainProvider: WebrtcProvide
   chunks.observe(onChunks);
   metaMap.observe(onChunks);
   mainAwareness.on("change", scheduleScan);
+  log("started for room", roomId, "clientId", clientId, "cache", cacheDir);
 
   // React to media list changes (new imports to hash, new gaps to fetch).
   unsubStore = useEditor.subscribe((s, prev) => {
@@ -146,6 +152,7 @@ async function refreshLocalHashes(): Promise<void> {
     if (hash) have.push(hash);
   }
   mainAwareness?.setLocalStateField("have", have);
+  log("refreshLocalHashes: advertising have =", have);
 }
 
 function updateMediaLocal(id: string, patch: Partial<MediaItem>): void {
@@ -181,11 +188,13 @@ async function maybeFetchMissing(): Promise<void> {
       cached = false;
     }
     if (cached) {
+      log("resolved", m.name, "from local cache");
       setMediaSrcLocal(m.id, finalPath);
       continue;
     }
 
     const holder = findHolder(m.contentHash);
+    log("need", m.name, "hash", m.contentHash.slice(0, 8), "ext", m.ext, "holder", holder);
     if (holder == null) continue; // nobody advertises it yet — retry on next scan
     void beginFetch(m, holder, finalPath);
   }
@@ -225,6 +234,7 @@ async function beginFetch(m: MediaItem, holder: number, finalPath: string): Prom
     servedBy: holder,
   };
   requests.set(requestId, req);
+  log("requested", m.name, "from peer", holder, "req", requestId.slice(0, 8));
 }
 
 // ── Serving (we hold the file) ───────────────────────────────────────────────
@@ -234,8 +244,12 @@ function onRequests(): void {
     const r = value as RequestRec;
     if (r.servedBy !== clientId || served.has(requestId)) return;
     const local = useEditor.getState().media.find((m) => m.contentHash === r.hash && m.src);
-    if (!local) return;
+    if (!local) {
+      log("got request for", r.hash.slice(0, 8), "but I don't have that file");
+      return;
+    }
     served.add(requestId);
+    log("serving", local.name, "for req", requestId.slice(0, 8));
     void serveFile(requestId, local.src, r);
   });
 }
@@ -272,8 +286,9 @@ async function serveFile(requestId: string, path: string, r: RequestRec): Promis
       chunks.set(`${requestId}:${seq}`, b64);
       offset += CHUNK_SIZE;
     }
+    log("served all", total, "chunks for req", requestId.slice(0, 8));
   } catch (err) {
-    console.error("serveFile failed:", err);
+    console.error("[mediaSync] serveFile failed:", err);
     served.delete(requestId);
   }
 }
@@ -287,6 +302,7 @@ async function drain(hash: string, f: FetchState): Promise<void> {
   if (!chunks || !metaMap || f.draining) return;
   const meta = metaMap.get(f.requestId) as { totalChunks: number; size: number } | undefined;
   if (!meta) return;
+  if (f.expected === 0) log("receiving", meta.totalChunks, "chunks for req", f.requestId.slice(0, 8));
 
   f.draining = true;
   try {
@@ -330,6 +346,7 @@ async function finishFetch(hash: string, f: FetchState): Promise<void> {
     await invoke("rename_path", { from: f.partPath, to: f.finalPath });
     setMediaSrcLocal(f.mediaId, f.finalPath);
     setTransfer(hash, { status: "done" });
+    log("fetch complete:", f.finalPath);
     setTimeout(() => clearTransfer(hash), 2500);
   } catch (err) {
     console.error("finishFetch failed:", err);

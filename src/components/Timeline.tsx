@@ -459,7 +459,9 @@ function TrackHeader({ track }: { track: Track }) {
   const setMuted = useEditor((s) => s.setTrackMuted);
   const renameTrack = useEditor((s) => s.renameTrack);
   const removeTrack = useEditor((s) => s.removeTrack);
-  const moveTrackLayer = useEditor((s) => s.moveTrackLayer);
+  const moveTrack = useEditor((s) => s.moveTrack);
+  const isFirst = useEditor((s) => s.tracks[0]?.id === track.id);
+  const isLast = useEditor((s) => s.tracks[s.tracks.length - 1]?.id === track.id);
 
   const onRename = () => {
     const next = window.prompt(`Rename ${track.name}`, track.name);
@@ -492,18 +494,13 @@ function TrackHeader({ track }: { track: Track }) {
           <MenuItem onSelect={() => setMuted(track.id, !track.muted)}>
             {track.muted ? "Unmute" : "Mute"}
           </MenuItem>
-          {track.kind === "video" && (
-            <>
-              <MenuSeparator />
-              <MenuLabel>Layer</MenuLabel>
-              <MenuItem icon={ArrowUp} onSelect={() => moveTrackLayer(track.id, "up")}>
-                Bring forward
-              </MenuItem>
-              <MenuItem icon={ArrowDown} onSelect={() => moveTrackLayer(track.id, "down")}>
-                Send backward
-              </MenuItem>
-            </>
-          )}
+          <MenuSeparator />
+          <MenuItem icon={ArrowUp} disabled={isFirst} onSelect={() => moveTrack(track.id, "up")}>
+            Move up
+          </MenuItem>
+          <MenuItem icon={ArrowDown} disabled={isLast} onSelect={() => moveTrack(track.id, "down")}>
+            Move down
+          </MenuItem>
           <MenuSeparator />
           <MenuItem danger icon={Trash2} onSelect={onDelete}>Delete track</MenuItem>
         </Menu>

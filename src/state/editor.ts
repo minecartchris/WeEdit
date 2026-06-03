@@ -110,6 +110,10 @@ interface EditorState {
   setTrackMuted: (id: string, muted: boolean) => void;
   /** Move a track up/down its render order among same-kind tracks (z-index). */
   moveTrackLayer: (id: string, direction: "up" | "down") => void;
+  /** Reorder a track up/down in the timeline list. Swaps with its neighbour;
+   *  when two video tracks swap, their z-index swaps too so the preview's
+   *  compositing order matches the new visual order. */
+  moveTrack: (id: string, direction: "up" | "down") => void;
 
   // ── Clips
   addClip: (clip: Clip) => void;
@@ -366,6 +370,25 @@ export const useEditor = create<EditorState>((set, get) => ({
             : t,
         ),
       });
+    }),
+  moveTrack: (id, direction) =>
+    set((s) => {
+      const idx = s.tracks.findIndex((t) => t.id === id);
+      if (idx < 0) return s;
+      const swapIdx = direction === "up" ? idx - 1 : idx + 1;
+      if (swapIdx < 0 || swapIdx >= s.tracks.length) return s;
+      const a = s.tracks[idx];
+      const b = s.tracks[swapIdx];
+      const tracks = [...s.tracks];
+      if (a.kind === "video" && b.kind === "video") {
+        // Swap z-index too so "higher in the list" stays "renders on top".
+        tracks[idx] = { ...b, zIndex: a.zIndex };
+        tracks[swapIdx] = { ...a, zIndex: b.zIndex };
+      } else {
+        tracks[idx] = b;
+        tracks[swapIdx] = a;
+      }
+      return withHistory(s, { tracks });
     }),
 
   // Clips

@@ -37,18 +37,23 @@ export function Timeline() {
   const clearSelection = useEditor((s) => s.clearSelection);
   const clipsMap = useEditor((s) => s.clips);
 
-  // Visible duration: at least 60s, else 1.2× the rightmost clip end.
-  const totalSec = useMemo(() => {
-    let max = 60;
+  // Actual content end — the rightmost clip edge. Drives the displayed total.
+  const contentEndSec = useMemo(() => {
+    let max = 0;
     for (const c of Object.values(clipsMap)) {
       const end = c.startSec + c.durationSec;
       if (end > max) max = end;
     }
-    return Math.max(max * 1.2, 60);
+    return max;
   }, [clipsMap]);
 
+  // Visible scroll/ruler duration: at least 60s, else 1.2× the content end so
+  // the rightmost clip handle isn't jammed against the edge. (Padding is for
+  // layout only — never shown as the project length.)
+  const totalSec = useMemo(() => Math.max(contentEndSec * 1.2, 60), [contentEndSec]);
+
   const totalDisplay = formatTimecode(playheadSec, fps);
-  const totalLength = formatTimecode(totalSec, fps);
+  const totalLength = formatTimecode(contentEndSec, fps);
 
   const rulerRef = useRef<HTMLDivElement>(null);
 

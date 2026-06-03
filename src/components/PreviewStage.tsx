@@ -84,7 +84,7 @@ export function PreviewStage({ aspect }: Props) {
       ))}
 
       {activeAudios.map((a) => (
-        <AudioLayer key={a.clip.id} {...a} isPlaying={isPlaying} playheadSec={playheadSec} />
+        <AudioLayer key={`${a.trackId}:${a.media.id}`} {...a} isPlaying={isPlaying} playheadSec={playheadSec} />
       ))}
     </StageFrame>
   );
@@ -113,18 +113,24 @@ function VideoLayer({
   const multiTrack = (media.audioTracks?.length ?? 0) > 0;
 
   // Sync currentTime to (playhead - clip.startSec + clip.sourceInSec).
+  // While playing, let the element run on its own clock and only correct a LARGE
+  // gap (a real seek). Constantly re-seeking to the rAF playhead is what caused
+  // the clip-boundary stutter, the seek-while-playing breakage, and the brief
+  // "double audio" overlap. When paused (scrubbing) keep a tight sync.
   useEffect(() => {
     const v = ref.current;
     if (!v) return;
     const target = playheadSec - clip.startSec + clip.sourceInSec;
-    if (Number.isFinite(target) && Math.abs(v.currentTime - target) > 0.1) {
+    if (!Number.isFinite(target)) return;
+    if (Math.abs(v.currentTime - target) > (isPlaying ? 0.5 : 0.08)) {
       try {
         v.currentTime = target;
       } catch {
         /* seek failed mid-load */
       }
+      if (isPlaying) v.play().catch(() => {});
     }
-  }, [playheadSec, clip.startSec, clip.sourceInSec]);
+  }, [playheadSec, clip.startSec, clip.sourceInSec, isPlaying]);
 
   // Drive play/pause off isPlaying.
   useEffect(() => {
@@ -206,14 +212,16 @@ function ExtractedAudioTrack({
     const a = ref.current;
     if (!a) return;
     const target = playheadSec - clip.startSec + clip.sourceInSec;
-    if (Number.isFinite(target) && Math.abs(a.currentTime - target) > 0.1) {
+    if (!Number.isFinite(target)) return;
+    if (Math.abs(a.currentTime - target) > (isPlaying ? 0.5 : 0.08)) {
       try {
         a.currentTime = target;
       } catch {
         /* seek failed mid-load */
       }
+      if (isPlaying) a.play().catch(() => {});
     }
-  }, [playheadSec, clip.startSec, clip.sourceInSec]);
+  }, [playheadSec, clip.startSec, clip.sourceInSec, isPlaying]);
 
   useEffect(() => {
     const a = ref.current;
@@ -319,6 +327,7 @@ function transformStyle(
 }
 
 interface ActiveAudio {
+  trackId: string;
   clip: MediaClip;
   media: MediaItem;
   volume: number;
@@ -337,14 +346,16 @@ function AudioLayer({
     const a = ref.current;
     if (!a) return;
     const target = playheadSec - clip.startSec + clip.sourceInSec;
-    if (Number.isFinite(target) && Math.abs(a.currentTime - target) > 0.1) {
+    if (!Number.isFinite(target)) return;
+    if (Math.abs(a.currentTime - target) > (isPlaying ? 0.5 : 0.08)) {
       try {
         a.currentTime = target;
       } catch {
         /* seek failed mid-load */
       }
+      if (isPlaying) a.play().catch(() => {});
     }
-  }, [playheadSec, clip.startSec, clip.sourceInSec]);
+  }, [playheadSec, clip.startSec, clip.sourceInSec, isPlaying]);
 
   useEffect(() => {
     const a = ref.current;
@@ -519,10 +530,14 @@ function StageFrame({
   return (
     <div
       ref={stageRef}
-      className="relative bg-black grid place-items-center max-h-full max-w-full overflow-hidden"
+      className="relative bg-black grid place-items-center overflow-hidden"
+      // Fit-to-area: take the largest w×h that fits the size-container parent
+      // while preserving aspect. One axis maxes out, the other is derived — so
+      // tall (9:16) or wide (21:9) frames always scale fully inside the preview.
       style={{
         aspectRatio: `${w} / ${h}`,
-        width: "min(100%, 1200px)",
+        width: `min(100cqw, calc(100cqh * ${w} / ${h}))`,
+        height: `min(100cqh, calc(100cqw * ${h} / ${w}))`,
       }}
     >
       {children}
@@ -595,7 +610,7 @@ function collectActiveVisuals(
         // Outgoing (behind): the previous clip's source keeps playing past its
         // cut into the lead-in window, fading out.
         out.push({
-          key: `${active.id}-out`,
+          key: `${track.id}-out`,
           clip: prev as MediaClip,
           media: mPrev,
           volume: vol(prev as MediaClip) * (1 - p),
@@ -603,7 +618,7 @@ function collectActiveVisuals(
         });
         // Incoming (front): crossfade ramps opacity; wipe reveals left→right.
         out.push({
-          key: active.id,
+          key: `${track.id}:${active.mediaId}`,
           clip: active,
           media: mActive,
           volume: vol(active) * p,
@@ -614,7 +629,13 @@ function collectActiveVisuals(
       }
     }
 
-    out.push({ key: active.id, clip: active, media: mActive, volume: vol(active), extraOpacity: 1 });
+    out.push({
+      key: `${track.id}:${active.mediaId}`,
+      clip: active,
+      media: mActive,
+      volume: vol(active),
+      extraOpacity: 1,
+    });
   }
   return out;
 }
@@ -636,6 +657,7 @@ function collectActiveAudios(
         const m = media.find((mm) => mm.id === (c as MediaClip).mediaId);
         if (!m) continue;
         out.push({
+          trackId: track.id,
           clip: c as MediaClip,
           media: m,
           volume: clamp01((c as MediaClip).volume * track.volume),

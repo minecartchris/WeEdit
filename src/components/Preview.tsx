@@ -61,7 +61,10 @@ export function Preview() {
     <section className="flex-1 min-w-0 flex flex-col bg-we-panel">
       <div
         ref={stageAreaRef}
-        className="flex-1 min-h-0 grid place-items-center bg-we-stage relative overflow-hidden"
+        className="flex-1 min-h-0 grid place-items-center bg-we-stage relative overflow-hidden p-2"
+        // Size container so the stage can fit itself to this area with cq units
+        // (so e.g. 9:16 scales down to fit instead of running off-screen).
+        style={{ containerType: "size" }}
       >
         <PreviewStage aspect={aspect} />
       </div>

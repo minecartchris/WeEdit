@@ -283,22 +283,32 @@ export const useEditor = create<EditorState>((set, get) => ({
   // Tracks
   addTrack: (kind) => {
     const id = `track-${kind}-${crypto.randomUUID().slice(0, 8)}`;
-    set((s) =>
-      withHistory(s, {
-        tracks: [
-          ...s.tracks,
-          {
-            id,
-            kind,
-            name: nextTrackName(s.tracks, kind),
-            volume: 1,
-            muted: false,
-            zIndex: nextZIndex(s.tracks, kind),
-            clipIds: [],
-          },
-        ],
-      }),
-    );
+    set((s) => {
+      const track: Track = {
+        id,
+        kind,
+        name: nextTrackName(s.tracks, kind),
+        volume: 1,
+        muted: false,
+        zIndex: nextZIndex(s.tracks, kind),
+        clipIds: [],
+      };
+      // Insertion order in the timeline list:
+      //  - video → on top of everything (cleaner layering, matches preview z).
+      //  - audio → directly below the video tracks (top of the audio stack).
+      //  - text  → appended at the end.
+      let tracks: Track[];
+      if (kind === "video") {
+        tracks = [track, ...s.tracks];
+      } else if (kind === "audio") {
+        const lastVideo = s.tracks.reduce((acc, t, i) => (t.kind === "video" ? i : acc), -1);
+        const at = lastVideo + 1;
+        tracks = [...s.tracks.slice(0, at), track, ...s.tracks.slice(at)];
+      } else {
+        tracks = [...s.tracks, track];
+      }
+      return withHistory(s, { tracks });
+    });
     return id;
   },
   removeTrack: (id) =>

@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "WeEdit",
-  "version": "0.0.26",
+  "version": "0.0.1",
   "identifier": "com.weedit.app",
   "build": {
     "frontendDist": "../dist",
@@ -29,9 +29,7 @@
       "csp": null,
       "assetProtocol": {
         "enable": true,
-        "scope": [
-          "**"
-        ]
+        "scope": ["**"]
       }
     }
   },

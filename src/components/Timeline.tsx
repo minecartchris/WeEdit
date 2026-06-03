@@ -523,7 +523,7 @@ function TrackHeader({ track }: { track: Track }) {
             step={0.01}
             value={track.volume}
             onChange={(e) => setVolume(track.id, parseFloat(e.target.value))}
-            className="accent-we-teal flex-1"
+            className="accent-we-teal flex-1 min-w-0"
             aria-label={`${track.name} volume`}
           />
         </div>

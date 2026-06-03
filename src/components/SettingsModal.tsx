@@ -155,8 +155,8 @@ function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void 
     >
       <span
         className={[
-          "absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform",
-          on ? "translate-x-[18px]" : "translate-x-0.5",
+          "absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white transition-transform",
+          on ? "translate-x-4" : "translate-x-0",
         ].join(" ")}
       />
     </button>

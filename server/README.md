@@ -19,7 +19,30 @@ VM and serves the WebSocket.
 
 ---
 
-## Deploy on a Debian VM (with nginx)
+## One-line deploy
+
+With DNS for `weedit.minecartchris.cc` pointed at the VM and ports 80/443 open,
+copy this `server/` folder to the VM, then from inside it run:
+
+```bash
+sudo bash deploy/install.sh
+```
+
+That installs Node + nginx, deploys the server to `/opt/weedit-signaling` as a
+systemd service, configures the nginx site, and requests a TLS cert via certbot.
+Re-run it any time to update. Override the domain with
+`sudo DOMAIN=other.example.com bash deploy/install.sh`.
+
+Just want to test the server in the foreground without nginx/systemd?
+
+```bash
+cd server && npm install --omit=dev && node signaling.mjs
+```
+
+The manual steps below are the same thing broken out, if you'd rather do it by
+hand or the script hits something specific to your box.
+
+## Deploy on a Debian VM (with nginx) — manual
 
 Assumes a fresh Debian and that DNS for `weedit.minecartchris.cc` already points
 an A/AAAA record at the VM's public IP, and ports 80/443 are open.

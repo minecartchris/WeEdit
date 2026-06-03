@@ -48,22 +48,27 @@ hand or the script hits something specific to your box.
 the VM — nginx serves the origin over plain HTTP on port 80. In the Cloudflare
 dashboard:
 
+The app connects to **`wss://weedit.minecartchris.cc:8443`** — 8443 is one of
+Cloudflare's proxiable HTTPS ports, so the edge cert covers it.
+
 1. Make `weedit.minecartchris.cc` a **proxied (orange-cloud)** record pointing at
    the origin.
-2. Set **SSL/TLS mode → Flexible** (edge → origin over HTTP:80).
-3. Cloudflare proxies WebSockets automatically, so `wss://weedit.minecartchris.cc`
-   reaches the origin as a normal `ws` upgrade — nothing extra to enable.
+2. Set **SSL/TLS mode → Flexible** (edge → origin over plain HTTP).
+3. Cloudflare proxies WebSockets automatically, so `wss://…:8443` reaches the
+   origin as a normal `ws` upgrade — nothing extra to enable.
 
-Cloudflare's orange-cloud proxy can only reach standard origin ports (80/443/…),
-**not 4444** — that's why nginx fronts the node server on :80.
+Cloudflare forwards to the origin on the **same port (8443)**, so nginx listens
+on 8443 (it also keeps :80 for convenient direct LAN checks). The node server
+stays on :4444 behind it. (4444 itself is *not* a Cloudflare-proxiable port,
+which is why nginx fronts it.)
 
 The origin has to be reachable *from Cloudflare*. Since this VM is on a private
 LAN (e.g. `192.168.1.242`), use one of:
 
 - **Cloudflare Tunnel** (no port forwarding — fits the rest of WeEdit): install
-  `cloudflared`, then `cloudflared tunnel --url http://localhost:80` (or a named
-  tunnel) and route the hostname to it.
-- **Port forward** 80 on your router to this VM, with Cloudflare DNS pointed at
+  `cloudflared`, then route the hostname to `http://localhost:8443` (or straight
+  to `http://localhost:4444` and skip nginx entirely).
+- **Port forward** 8443 on your router to this VM, with Cloudflare DNS pointed at
   your public IP.
 
 ## Deploy on a Debian VM (with nginx) — manual
@@ -121,9 +126,9 @@ No certbot — see the **TLS / Cloudflare** section above.
 ### 5. Test
 
 - Direct (LAN): `http://<vm-ip>:4444/health` → JSON with `ok: true`.
-- Through nginx: `http://<vm-ip>/health` (port 80, the Cloudflare origin).
-- Public: `https://weedit.minecartchris.cc/health` once Cloudflare is pointed at
-  the origin.
+- Through nginx: `http://<vm-ip>:8443/health` (the Cloudflare origin port).
+- Public: `https://weedit.minecartchris.cc:8443/health` once Cloudflare is
+  pointed at the origin.
 - App: launch WeEdit on two machines, **Start a session** on one, copy the code,
   **Join** on the other. The collaborate button should show `2`, and each peer's
   playhead should appear on the other's timeline.
@@ -131,7 +136,7 @@ No certbot — see the **TLS / Cloudflare** section above.
 A quick WebSocket smoke test from any machine:
 
 ```bash
-npx wscat -c wss://weedit.minecartchris.cc
+npx wscat -c wss://weedit.minecartchris.cc:8443
 > {"type":"subscribe","topics":["test"]}
 > {"type":"publish","topic":"test","hello":"world"}   # echoes back to subscribers
 ```

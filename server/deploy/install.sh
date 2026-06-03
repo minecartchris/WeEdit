@@ -66,12 +66,13 @@ echo
 echo "==> Done. TLS is handled by Cloudflare — no cert installed here."
 echo
 echo "    Local check:   $(curl -s http://127.0.0.1:4444/health || echo '(node not responding)')"
-echo "    LAN check:     http://${LAN_IP}:4444/health   (node, direct)"
-echo "    Origin check:  http://${LAN_IP}/health        (through nginx :80)"
+echo "    LAN check:     http://${LAN_IP}:4444/health     (node, direct)"
+echo "    Origin check:  http://${LAN_IP}:8443/health     (through nginx :8443)"
 echo
 echo "    Service:  systemctl status weedit-signaling"
 echo "    Logs:     journalctl -u weedit-signaling -f"
 echo
 echo "Cloudflare: point ${DOMAIN} at this origin (proxied / orange cloud) and set"
-echo "SSL/TLS mode to Flexible. The origin must be reachable from Cloudflare —"
-echo "forward port 80 to this VM, or run a Cloudflare Tunnel to localhost:80."
+echo "SSL/TLS mode to Flexible. The app connects on :8443 — make the origin"
+echo "reachable from Cloudflare: forward port 8443 to this VM, or run a Cloudflare"
+echo "Tunnel to localhost:8443."

@@ -9,10 +9,11 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "fetch-binaries": "node scripts/fetch-ffmpeg.mjs",
+    "clean-installers": "node scripts/clean-installers.mjs",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "npm run fetch-binaries && tauri build",
-    "tauri:build:release": "npm run fetch-binaries && tauri build --config src-tauri/tauri.release.conf.json",
+    "tauri:build": "npm run fetch-binaries && npm run clean-installers && tauri build",
+    "tauri:build:release": "npm run fetch-binaries && npm run clean-installers && tauri build --config src-tauri/tauri.release.conf.json",
     "release": "powershell -ExecutionPolicy Bypass -File scripts/release.ps1"
   },
   "dependencies": {

@@ -1,0 +1,29 @@
+[Unit]
+Description=WeEdit WebRTC signaling server
+Documentation=https://github.com/minecartchris/WeEdit
+After=network.target
+
+[Service]
+Type=simple
+# Runs as an unprivileged user (create with: sudo useradd --system --no-create-home --shell /usr/sbin/nologin weedit)
+User=weedit
+Group=weedit
+WorkingDirectory=/opt/weedit-signaling
+ExecStart=/usr/bin/node /opt/weedit-signaling/signaling.mjs
+Environment=PORT=4444
+Environment=HOST=127.0.0.1
+Restart=on-failure
+RestartSec=2
+
+# Hardening — the server needs nothing but a loopback socket.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

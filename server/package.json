@@ -1,0 +1,17 @@
+{
+  "name": "weedit-signaling",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "WebRTC signaling server for WeEdit real-time collaboration (y-webrtc compatible).",
+  "main": "signaling.mjs",
+  "scripts": {
+    "start": "node signaling.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

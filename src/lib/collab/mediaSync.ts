@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { appLocalDataDir } from "@tauri-apps/api/path";
 import { WebrtcProvider } from "y-webrtc";
 import * as Y from "yjs";
+import { webrtcProviderOptions } from "@/lib/collab/config";
 import { useEditor } from "@/state/editor";
 import { clearTransfer, setTransfer, useTransfers } from "@/state/transfers";
 import type { MediaItem } from "@/types";
@@ -21,7 +22,6 @@ import type { MediaItem } from "@/types";
 
 const CHUNK_SIZE = 64 * 1024;        // bytes per chunk
 const SERVE_WINDOW = 24;             // max outstanding (unconsumed) chunks in flight
-const SIGNALING = ["wss://signaling.yjs.dev", "wss://demos.yjs.dev"];
 
 interface RequestRec {
   hash: string;
@@ -68,7 +68,7 @@ export async function startMediaSync(roomId: string, mainProvider: WebrtcProvide
   cacheDir = `${base}/collab-media`;
 
   filesDoc = new Y.Doc();
-  filesProvider = new WebrtcProvider(`weedit-files-${roomId}`, filesDoc, { signaling: SIGNALING });
+  filesProvider = new WebrtcProvider(`weedit-files-${roomId}`, filesDoc, webrtcProviderOptions());
   requests = filesDoc.getMap("requests");
   metaMap = filesDoc.getMap("meta");
   chunks = filesDoc.getMap("chunks");

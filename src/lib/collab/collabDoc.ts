@@ -1,5 +1,6 @@
 import { WebrtcProvider } from "y-webrtc";
 import * as Y from "yjs";
+import { webrtcProviderOptions } from "@/lib/collab/config";
 
 // Low-level collaboration session: a single Y.Doc synced peer-to-peer over
 // y-webrtc using public signaling servers (no hosted infra, no port forwarding —
@@ -14,11 +15,6 @@ import * as Y from "yjs";
 //   media   : Y.Map<mediaId, MediaItem>
 //   tracks  : Y.Map<trackId, Track>
 //   clips   : Y.Map<clipId, Clip>
-
-// Public signaling servers. They only broker the WebRTC handshake; if one is
-// down the others still connect peers. Reliability of public signaling varies —
-// surfaced honestly in the collab UI.
-const SIGNALING = ["wss://signaling.yjs.dev", "wss://demos.yjs.dev"];
 
 /** Transaction origin tag for our own writes, so observers can skip the echo. */
 export const LOCAL_ORIGIN = Symbol("weedit-local");
@@ -47,9 +43,7 @@ export function getSession(): CollabSession | null {
 export function createSession(roomId: string): CollabSession {
   destroySession();
   const doc = new Y.Doc();
-  const provider = new WebrtcProvider(`weedit-${roomId}`, doc, {
-    signaling: SIGNALING,
-  });
+  const provider = new WebrtcProvider(`weedit-${roomId}`, doc, webrtcProviderOptions());
   const maps: CollabMaps = {
     project: doc.getMap("project"),
     media: doc.getMap("media"),

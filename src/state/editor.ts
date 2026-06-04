@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import {
   KEYFRAME_EPSILON,
+  MIN_CLIP_DURATION,
   clampClipStart,
   isMediaCompatibleWithTrack,
   resolveTransform,
@@ -132,6 +133,9 @@ interface EditorState {
   pasteClips: () => void;
   /** Split a video clip's audio onto a new audio track and mute the video. */
   detachAudio: (clipId: string) => void;
+  /** Set a media clip's playback speed (rescales its timeline duration to keep
+   *  the same source span, clamped so it doesn't overlap the next clip). */
+  setClipSpeed: (clipId: string, speed: number) => void;
 
   // ── Transform / keyframes (visible clips)
   /** Apply a transform patch: edits the keyframe at the playhead if the clip is
@@ -468,6 +472,8 @@ export const useEditor = create<EditorState>((set, get) => ({
         const offset = t - clip.startSec;
         if (offset <= 0 || offset >= clip.durationSec) continue;
 
+        // Source consumed by the left part scales with speed.
+        const speed = clip.kind === "text" ? 1 : (clip as MediaClip).speed ?? 1;
         const left = { ...clip, durationSec: offset };
         const rightId = crypto.randomUUID();
         const right = {
@@ -475,7 +481,7 @@ export const useEditor = create<EditorState>((set, get) => ({
           id: rightId,
           startSec: t,
           durationSec: clip.durationSec - offset,
-          sourceInSec: clip.sourceInSec + offset,
+          sourceInSec: clip.sourceInSec + offset * speed,
         };
         newClips[id] = left as Clip;
         newClips[rightId] = right as Clip;
@@ -597,6 +603,31 @@ export const useEditor = create<EditorState>((set, get) => ({
         },
         selectedClipIds: [audioClipId],
       });
+    }),
+
+  setClipSpeed: (clipId, speed) =>
+    set((s) => {
+      const clip = s.clips[clipId];
+      if (!clip || clip.kind === "text") return s;
+      const mc = clip as MediaClip;
+      const sp = Math.max(0.25, Math.min(4, speed));
+      const sourceSpan = mc.durationSec * (mc.speed ?? 1);
+      let newDur = sourceSpan / sp;
+      // Slowing down lengthens the clip — clamp so it can't cover the next clip
+      // on the same track.
+      let maxDur = Infinity;
+      for (const other of Object.values(s.clips)) {
+        if (other.id === clipId || other.trackId !== mc.trackId) continue;
+        if (other.startSec >= mc.startSec + 1e-6) {
+          maxDur = Math.min(maxDur, other.startSec - mc.startSec);
+        }
+      }
+      newDur = Math.max(MIN_CLIP_DURATION, Math.min(maxDur, newDur));
+      // No history here — like updateClip, the slider snapshots once on mousedown
+      // so a whole speed drag collapses into a single undo entry.
+      return {
+        clips: { ...s.clips, [clipId]: { ...mc, speed: sp, durationSec: newDur } as Clip },
+      };
     }),
 
   // Transform / keyframes

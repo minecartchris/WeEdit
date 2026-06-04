@@ -111,8 +111,18 @@ function VideoLayer({
 }) {
   const ref = useRef<HTMLVideoElement>(null);
   const multiTrack = (media.audioTracks?.length ?? 0) > 0;
+  const speed = clip.speed ?? 1;
+  const pitchPreserved = clip.pitchPreserved ?? true;
 
-  // Sync currentTime to (playhead - clip.startSec + clip.sourceInSec).
+  // Playback speed + whether pitch follows it.
+  useEffect(() => {
+    const v = ref.current;
+    if (!v) return;
+    v.playbackRate = speed;
+    (v as HTMLMediaElement & { preservesPitch?: boolean }).preservesPitch = pitchPreserved;
+  }, [speed, pitchPreserved]);
+
+  // Sync currentTime to the source position for this playhead (speed-scaled).
   // While playing, let the element run on its own clock and only correct a LARGE
   // gap (a real seek). Constantly re-seeking to the rAF playhead is what caused
   // the clip-boundary stutter, the seek-while-playing breakage, and the brief
@@ -120,7 +130,7 @@ function VideoLayer({
   useEffect(() => {
     const v = ref.current;
     if (!v) return;
-    const target = playheadSec - clip.startSec + clip.sourceInSec;
+    const target = clip.sourceInSec + (playheadSec - clip.startSec) * speed;
     if (!Number.isFinite(target)) return;
     if (Math.abs(v.currentTime - target) > (isPlaying ? 0.5 : 0.08)) {
       try {
@@ -130,7 +140,7 @@ function VideoLayer({
       }
       if (isPlaying) v.play().catch(() => {});
     }
-  }, [playheadSec, clip.startSec, clip.sourceInSec, isPlaying]);
+  }, [playheadSec, clip.startSec, clip.sourceInSec, speed, isPlaying]);
 
   // Drive play/pause off isPlaying.
   useEffect(() => {
@@ -207,11 +217,20 @@ function ExtractedAudioTrack({
 }) {
   const ref = useRef<HTMLAudioElement>(null);
   const effectiveVolume = muted ? 0 : trackVolume;
+  const speed = clip.speed ?? 1;
+  const pitchPreserved = clip.pitchPreserved ?? true;
 
   useEffect(() => {
     const a = ref.current;
     if (!a) return;
-    const target = playheadSec - clip.startSec + clip.sourceInSec;
+    a.playbackRate = speed;
+    (a as HTMLMediaElement & { preservesPitch?: boolean }).preservesPitch = pitchPreserved;
+  }, [speed, pitchPreserved]);
+
+  useEffect(() => {
+    const a = ref.current;
+    if (!a) return;
+    const target = clip.sourceInSec + (playheadSec - clip.startSec) * speed;
     if (!Number.isFinite(target)) return;
     if (Math.abs(a.currentTime - target) > (isPlaying ? 0.5 : 0.08)) {
       try {
@@ -221,7 +240,7 @@ function ExtractedAudioTrack({
       }
       if (isPlaying) a.play().catch(() => {});
     }
-  }, [playheadSec, clip.startSec, clip.sourceInSec, isPlaying]);
+  }, [playheadSec, clip.startSec, clip.sourceInSec, speed, isPlaying]);
 
   useEffect(() => {
     const a = ref.current;
@@ -341,11 +360,20 @@ function AudioLayer({
   playheadSec,
 }: ActiveAudio & { isPlaying: boolean; playheadSec: number }) {
   const ref = useRef<HTMLAudioElement>(null);
+  const speed = clip.speed ?? 1;
+  const pitchPreserved = clip.pitchPreserved ?? true;
 
   useEffect(() => {
     const a = ref.current;
     if (!a) return;
-    const target = playheadSec - clip.startSec + clip.sourceInSec;
+    a.playbackRate = speed;
+    (a as HTMLMediaElement & { preservesPitch?: boolean }).preservesPitch = pitchPreserved;
+  }, [speed, pitchPreserved]);
+
+  useEffect(() => {
+    const a = ref.current;
+    if (!a) return;
+    const target = clip.sourceInSec + (playheadSec - clip.startSec) * speed;
     if (!Number.isFinite(target)) return;
     if (Math.abs(a.currentTime - target) > (isPlaying ? 0.5 : 0.08)) {
       try {
@@ -355,7 +383,7 @@ function AudioLayer({
       }
       if (isPlaying) a.play().catch(() => {});
     }
-  }, [playheadSec, clip.startSec, clip.sourceInSec, isPlaying]);
+  }, [playheadSec, clip.startSec, clip.sourceInSec, speed, isPlaying]);
 
   useEffect(() => {
     const a = ref.current;

@@ -262,7 +262,9 @@ function MediaProps({ clip }: { clip: MediaClip }) {
   const updateClip = useEditor((s) => s.updateClip);
   const pushHistory = useEditor((s) => s.pushHistory);
   const detachAudio = useEditor((s) => s.detachAudio);
+  const setClipSpeed = useEditor((s) => s.setClipSpeed);
   const media = useEditor((s) => s.media.find((m) => m.id === clip.mediaId) ?? null);
+  const pitchPreserved = clip.pitchPreserved ?? true;
 
   const muted = clip.mutedTracks ?? [];
   const toggleTrackMute = (index: number) => {
@@ -297,6 +299,33 @@ function MediaProps({ clip }: { clip: MediaClip }) {
           onCommitStart={pushHistory}
           onChange={(v) => updateClip(clip.id, { volume: v / 100 })}
         />
+      )}
+      {clip.kind !== "image" && (
+        <>
+          <NumberField
+            label="Speed"
+            value={Math.round((clip.speed ?? 1) * 100)}
+            min={25}
+            max={400}
+            step={5}
+            suffix="%"
+            resetTo={100}
+            onCommitStart={pushHistory}
+            onChange={(v) => setClipSpeed(clip.id, v / 100)}
+          />
+          <label className="flex items-center gap-2 text-xs text-we-ink -mt-1">
+            <input
+              type="checkbox"
+              checked={pitchPreserved}
+              onChange={() => {
+                pushHistory();
+                updateClip(clip.id, { pitchPreserved: !pitchPreserved });
+              }}
+              className="accent-we-teal"
+            />
+            Keep original pitch
+          </label>
+        </>
       )}
       {media?.audioTracks && media.audioTracks.length >= 1 && (
         <div className="flex flex-col gap-1.5">

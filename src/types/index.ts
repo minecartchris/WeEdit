@@ -133,6 +133,17 @@ export interface MediaClip extends ClipBase, Transform {
   /** 0..1, applies to video/audio. */
   volume: number;
   /**
+   * Playback speed multiplier for video/audio (1 = normal, 2 = twice as fast,
+   * 0.5 = half speed). Changing it rescales the clip's timeline duration. The
+   * source span this clip covers is `durationSec * speed`. Undefined = 1.
+   */
+  speed?: number;
+  /**
+   * When speeding/slowing, keep the original pitch (true, default) or let the
+   * pitch rise/fall with the speed like a tape (false).
+   */
+  pitchPreserved?: boolean;
+  /**
    * Per-clip muted audio-stream indices (for multi-audio sources). Lives on the
    * clip — not the shared MediaItem — so two clips of the same media (e.g. a
    * copy/paste) can mute different streams independently.

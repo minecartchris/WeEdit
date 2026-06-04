@@ -125,6 +125,8 @@ export function ClipBlock({ clip, pxPerSec }: ClipBlockProps) {
     };
     const sourceDur =
       sourceMedia?.durationSec != null ? sourceMedia.durationSec : Infinity;
+    // Speed scales how a timeline-second of trim maps onto source-seconds.
+    const speed = clip.kind === "text" ? 1 : (clip as MediaClip).speed ?? 1;
     const anchors = collectAnchors();
     const overlapWin = clipNoOverlapWindow(
       clip.id,
@@ -138,10 +140,11 @@ export function ClipBlock({ clip, pxPerSec }: ClipBlockProps) {
       const dSec = (ev.clientX - startX) / pxPerSec;
       if (edge === "left") {
         // Left edge: clamp by source start (sourceInSec >= 0), MIN_DUR, t>=0,
-        // AND no-overlap window's lower bound.
+        // AND no-overlap window's lower bound. Source moves by dragged*speed, so
+        // the source-floor limit is -sourceInSec/speed timeline seconds.
         const lowerByOverlap = overlapWin.min - initial.startSec;
         const minDragged = Math.max(
-          -initial.sourceInSec,
+          -initial.sourceInSec / speed,
           -initial.startSec,
           lowerByOverlap,
         );
@@ -157,13 +160,13 @@ export function ClipBlock({ clip, pxPerSec }: ClipBlockProps) {
         }
         updateClip(clip.id, {
           startSec: nextStart,
-          sourceInSec: initial.sourceInSec + dragged,
+          sourceInSec: initial.sourceInSec + dragged * speed,
           durationSec: initial.durationSec - dragged,
         });
       } else {
         // Right edge: extend duration up to source remaining AND up to the
-        // next neighbour's start.
-        const sourceMaxDur = Math.max(MIN_CLIP_DURATION, sourceDur - initial.sourceInSec);
+        // next neighbour's start. Remaining source maps to timeline via /speed.
+        const sourceMaxDur = Math.max(MIN_CLIP_DURATION, (sourceDur - initial.sourceInSec) / speed);
         const overlapMaxDur = overlapWin.max === Infinity
           ? Infinity
           : Math.max(MIN_CLIP_DURATION, overlapWin.max - initial.startSec + initial.durationSec);

@@ -95,13 +95,17 @@ export function compileExport(input: ExportInputs, opts: ExportOptions): Compile
     const inLabel = `[${inputIdx}:v]`;
     const prepared = `vp${vCounter++}`;
 
+    // Speed: grab `durationSec * speed` of source, then setpts/speed compresses
+    // (or stretches) it to occupy durationSec on the timeline. Images ignore it.
+    const speed = m.kind === "image" ? 1 : clip.speed ?? 1;
+    const sourceSpan = clip.durationSec * speed;
     const head =
       m.kind === "image"
         ? `${inLabel}loop=loop=-1:size=1,trim=duration=${clip.durationSec.toFixed(3)}`
-        : `${inLabel}trim=start=${clip.sourceInSec.toFixed(3)}:duration=${clip.durationSec.toFixed(3)}`;
+        : `${inLabel}trim=start=${clip.sourceInSec.toFixed(3)}:duration=${sourceSpan.toFixed(3)}`;
 
     parts.push(
-      `${head},setpts=PTS-STARTPTS,` +
+      `${head},setpts=(PTS-STARTPTS)/${speed.toFixed(6)},` +
         `scale=${opts.width}:${opts.height}:force_original_aspect_ratio=decrease,` +
         `pad=${opts.width}:${opts.height}:(ow-iw)/2:(oh-ih)/2:color=black@0,` +
         `setpts=PTS+${clip.startSec.toFixed(3)}/TB,` +
@@ -208,7 +212,20 @@ function compileAudio(ctx: AudioCompileCtx): string | null {
 
     const delayMs = Math.max(0, Math.round(mc.startSec * 1000));
     const adelay = `adelay=${delayMs}|${delayMs}`;
-    const trim = `atrim=start=${mc.sourceInSec.toFixed(3)}:duration=${mc.durationSec.toFixed(3)},asetpts=PTS-STARTPTS`;
+    // Speed: trim `durationSec * speed` of source, then retime to durationSec.
+    // Pitch preserved → atempo (sample-rate agnostic); pitch follows → asetrate
+    // (tape effect; assumes 48 kHz, the norm for screen/Twitch captures).
+    const speed = mc.speed ?? 1;
+    const pitchPreserved = mc.pitchPreserved ?? true;
+    const speedFilter =
+      speed === 1
+        ? ""
+        : pitchPreserved
+        ? atempoChain(speed)
+        : `asetrate=${Math.round(48000 * speed)},aresample=48000`;
+    const trim =
+      `atrim=start=${mc.sourceInSec.toFixed(3)}:duration=${(mc.durationSec * speed).toFixed(3)},asetpts=PTS-STARTPTS` +
+      (speedFilter ? `,${speedFilter}` : "");
     const volume = `volume=${effVolume.toFixed(3)}`;
 
     if (m.kind === "image") continue;
@@ -271,6 +288,23 @@ function compileAudio(ctx: AudioCompileCtx): string | null {
 }
 
 // ── Helpers ──
+
+// atempo only accepts factors in [0.5, 2.0]; chain it to reach any speed while
+// preserving pitch (e.g. 4× = atempo=2,atempo=2; 0.25× = atempo=0.5,atempo=0.5).
+function atempoChain(speed: number): string {
+  let s = speed;
+  const parts: string[] = [];
+  while (s > 2.0 + 1e-9) {
+    parts.push("atempo=2.0");
+    s /= 2.0;
+  }
+  while (s < 0.5 - 1e-9) {
+    parts.push("atempo=0.5");
+    s /= 0.5;
+  }
+  parts.push(`atempo=${s.toFixed(6)}`);
+  return parts.join(",");
+}
 
 function computeTotalDuration(clips: Record<string, Clip>): number {
   let max = 0;

@@ -1,6 +1,6 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { MAX_SCALE, MIN_SCALE, previousClipOnTrack, resolveTransform } from "@/lib/clips";
+import { MAX_SCALE, MIN_SCALE, previousClipOnTrack, resolveTransform, type ResolvedTransform } from "@/lib/clips";
 import { useEditor } from "@/state/editor";
 import type { AspectRatio, Clip, MediaClip, MediaItem, TextClip } from "@/types";
 
@@ -172,7 +172,7 @@ function VideoLayer({
     <>
       <div
         data-cliplayer={clip.id}
-        style={{ ...transformStyle(resolveTransform(clip, playheadSec), clip.rotation, clip.tilt), ...clipStyle }}
+        style={{ ...transformStyle(resolveTransform(clip, playheadSec)), ...clipStyle }}
       >
         <video
           ref={ref}
@@ -286,7 +286,7 @@ function ImageLayer({
   return (
     <div
       data-cliplayer={clip.id}
-      style={{ ...transformStyle(resolveTransform(clip, playheadSec), clip.rotation, clip.tilt), ...clipStyle }}
+      style={{ ...transformStyle(resolveTransform(clip, playheadSec)), ...clipStyle }}
     >
       <img
         src={convertFileSrc(media.src)}
@@ -307,7 +307,7 @@ function TextLayer({ clip, playheadSec }: { clip: TextClip; playheadSec: number 
       style={{
         left: `${tf.xPct}%`,
         top: `${tf.yPct}%`,
-        transform: `perspective(1200px) translate(-50%, -50%) rotateX(${clip.tilt}deg) rotateZ(${clip.rotation}deg) scale(${tf.scale})`,
+        transform: `perspective(1200px) translate(-50%, -50%) rotateX(${tf.tilt}deg) rotateZ(${tf.rotation}deg) scale(${tf.scale})`,
         transformOrigin: "center",
         fontFamily: clip.fontFamily,
         fontSize: `${clip.fontSizePx}px`,
@@ -329,18 +329,14 @@ function TextLayer({ clip, playheadSec }: { clip: TextClip; playheadSec: number 
 // Absolute, stage-sized box centered on (xPct,yPct), scaled, rotated and tilted.
 // Media fills it with object-contain, so the default 50/50/scale-1/0°/0° overlays
 // the whole stage exactly as before; changing the transform moves/zooms/rotates.
-function transformStyle(
-  t: { xPct: number; yPct: number; scale: number },
-  rotation = 0,
-  tilt = 0,
-): React.CSSProperties {
+function transformStyle(t: ResolvedTransform): React.CSSProperties {
   return {
     position: "absolute",
     left: `${t.xPct}%`,
     top: `${t.yPct}%`,
     width: "100%",
     height: "100%",
-    transform: `perspective(1200px) translate(-50%, -50%) rotateX(${tilt}deg) rotateZ(${rotation}deg) scale(${t.scale})`,
+    transform: `perspective(1200px) translate(-50%, -50%) rotateX(${t.tilt}deg) rotateZ(${t.rotation}deg) scale(${t.scale})`,
     transformOrigin: "center",
   };
 }

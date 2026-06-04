@@ -45,7 +45,14 @@ export function normalizeClip(clip: Clip): Clip {
   const scale = typeof clip.scale === "number" ? clip.scale : 1;
   const rotation = typeof clip.rotation === "number" ? clip.rotation : 0;
   const tilt = typeof clip.tilt === "number" ? clip.tilt : 0;
-  return { ...clip, xPct, yPct, scale, rotation, tilt } as Clip;
+  // Keyframes saved before rotation/tilt were animatable lack those fields;
+  // default them to 0 so interpolation doesn't produce NaN.
+  const keyframes = clip.keyframes?.map((k) => ({
+    ...k,
+    rotation: typeof k.rotation === "number" ? k.rotation : 0,
+    tilt: typeof k.tilt === "number" ? k.tilt : 0,
+  }));
+  return { ...clip, xPct, yPct, scale, rotation, tilt, keyframes } as Clip;
 }
 
 export function normalizeClips(
@@ -68,13 +75,19 @@ function lerp(a: number, b: number, f: number): number {
  * the static xPct/yPct/scale are used; otherwise the surrounding keyframes are
  * linearly interpolated (clamped to the first/last outside their range).
  */
-/** The animated part of a transform (rotation/tilt are static, not keyframed). */
-export type PositionScale = Pick<Transform, "xPct" | "yPct" | "scale">;
+/** The full animated transform — every field is keyframable. */
+export type ResolvedTransform = Transform;
 
-export function resolveTransform(clip: MediaClip | TextClip, playheadSec: number): PositionScale {
+export function resolveTransform(clip: MediaClip | TextClip, playheadSec: number): ResolvedTransform {
   const kfs = clip.keyframes;
   if (!kfs || kfs.length === 0) {
-    return { xPct: clip.xPct, yPct: clip.yPct, scale: clip.scale };
+    return {
+      xPct: clip.xPct,
+      yPct: clip.yPct,
+      scale: clip.scale,
+      rotation: clip.rotation,
+      tilt: clip.tilt,
+    };
   }
   const t = playheadSec - clip.startSec;
   if (t <= kfs[0].tSec) return pickTransform(kfs[0]);
@@ -90,14 +103,16 @@ export function resolveTransform(clip: MediaClip | TextClip, playheadSec: number
         xPct: lerp(a.xPct, b.xPct, f),
         yPct: lerp(a.yPct, b.yPct, f),
         scale: lerp(a.scale, b.scale, f),
+        rotation: lerp(a.rotation, b.rotation, f),
+        tilt: lerp(a.tilt, b.tilt, f),
       };
     }
   }
   return pickTransform(last);
 }
 
-function pickTransform(t: PositionScale): PositionScale {
-  return { xPct: t.xPct, yPct: t.yPct, scale: t.scale };
+function pickTransform(t: ResolvedTransform): ResolvedTransform {
+  return { xPct: t.xPct, yPct: t.yPct, scale: t.scale, rotation: t.rotation, tilt: t.tilt };
 }
 
 /** Convert a percentage (0..100) of a dimension to pixels, and back. */

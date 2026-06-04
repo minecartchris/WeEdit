@@ -71,9 +71,9 @@ export interface Track {
 
 /**
  * A single keyframe for animated transforms. `tSec` is relative to the clip
- * start. The preview interpolates xPct/yPct/scale linearly between the
- * surrounding keyframes; when a clip has no keyframes, its static
- * `xPct/yPct/scale` fields are used instead.
+ * start. The preview interpolates xPct/yPct/scale/rotation/tilt linearly
+ * between the surrounding keyframes; when a clip has no keyframes, its static
+ * transform fields are used instead.
  */
 export interface Keyframe {
   /** Time within the clip, in seconds from clip start. */
@@ -81,6 +81,10 @@ export interface Keyframe {
   xPct: number;
   yPct: number;
   scale: number;
+  /** In-plane rotation in degrees (rotateZ). */
+  rotation: number;
+  /** 3D forward/back tilt in degrees (rotateX). */
+  tilt: number;
 }
 
 /** Cross-clip transition types (blended over the incoming clip's lead-in). */
@@ -101,7 +105,7 @@ export interface ClipBase {
   durationSec: number;
   /** Where in the source this clip starts (for trims), in seconds. */
   sourceInSec: number;
-  /** Optional X/Y/Zoom keyframes, sorted by tSec. */
+  /** Optional X/Y/Zoom/Rotation/Tilt keyframes, sorted by tSec. */
   keyframes?: Keyframe[];
   /**
    * Optional transition INTO this clip from the previous clip on the same

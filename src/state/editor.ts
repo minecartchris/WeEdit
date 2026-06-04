@@ -646,6 +646,8 @@ export const useEditor = create<EditorState>((set, get) => ({
         xPct: patch.xPct ?? cur.xPct,
         yPct: patch.yPct ?? cur.yPct,
         scale: patch.scale ?? cur.scale,
+        rotation: patch.rotation ?? cur.rotation,
+        tilt: patch.tilt ?? cur.tilt,
       };
       const idx = kfs.findIndex((k) => Math.abs(k.tSec - t) <= KEYFRAME_EPSILON);
       const keyframes =
@@ -661,7 +663,14 @@ export const useEditor = create<EditorState>((set, get) => ({
       const vc = clip as MediaClip | TextClip;
       const t = Math.max(0, Math.min(vc.durationSec, s.playheadSec - vc.startSec));
       const cur = resolveTransform(vc, s.playheadSec);
-      const kf: Keyframe = { tSec: t, xPct: cur.xPct, yPct: cur.yPct, scale: cur.scale };
+      const kf: Keyframe = {
+        tSec: t,
+        xPct: cur.xPct,
+        yPct: cur.yPct,
+        scale: cur.scale,
+        rotation: cur.rotation,
+        tilt: cur.tilt,
+      };
       const existing = (vc.keyframes ?? []).filter((k) => Math.abs(k.tSec - t) > KEYFRAME_EPSILON);
       const keyframes = [...existing, kf].sort((a, b) => a.tSec - b.tSec);
       return withHistory(s, { clips: { ...s.clips, [clipId]: { ...vc, keyframes } as Clip } });

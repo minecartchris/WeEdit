@@ -136,7 +136,6 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 
 function TransformProps({ clip }: { clip: MediaClip | TextClip }) {
   const setTransform = useEditor((s) => s.setTransformAtPlayhead);
-  const updateClip = useEditor((s) => s.updateClip);
   const pushHistory = useEditor((s) => s.pushHistory);
   const unit = usePrefs((s) => s.positionUnit);
   const frameW = useEditor((s) => s.project.width);
@@ -186,25 +185,25 @@ function TransformProps({ clip }: { clip: MediaClip | TextClip }) {
       />
       <NumberField
         label="Rotation"
-        value={Math.round(clip.rotation)}
+        value={Math.round(tf.rotation)}
         min={-180}
         max={180}
         step={1}
         suffix="°"
         resetTo={0}
         onCommitStart={pushHistory}
-        onChange={(v) => updateClip(clip.id, { rotation: v })}
+        onChange={(v) => setTransform(clip.id, { rotation: v })}
       />
       <NumberField
         label="Tilt (3D)"
-        value={Math.round(clip.tilt)}
+        value={Math.round(tf.tilt)}
         min={-80}
         max={80}
         step={1}
         suffix="°"
         resetTo={0}
         onCommitStart={pushHistory}
-        onChange={(v) => updateClip(clip.id, { tilt: v })}
+        onChange={(v) => setTransform(clip.id, { tilt: v })}
       />
     </section>
   );
@@ -219,7 +218,7 @@ function KeyframeProps({ clip }: { clip: MediaClip | TextClip }) {
   return (
     <section className="flex flex-col gap-2 border-t border-we-border pt-4">
       <div className="flex items-center justify-between">
-        <SectionTitle>Keyframes (X / Y / Zoom)</SectionTitle>
+        <SectionTitle>Keyframes (X / Y / Zoom / Rot / Tilt)</SectionTitle>
         {kfs.length > 0 && (
           <button onClick={() => clearKeyframes(clip.id)} className="text-[11px] text-we-muted hover:text-we-ink">
             Clear
@@ -242,7 +241,7 @@ function KeyframeProps({ clip }: { clip: MediaClip | TextClip }) {
               className="flex items-center justify-between gap-2 text-xs text-we-muted px-2 py-1 rounded hover:bg-we-hover"
             >
               <span className="tabular-nums truncate">
-                {k.tSec.toFixed(2)}s · {Math.round(k.xPct)},{Math.round(k.yPct)} · {Math.round(k.scale * 100)}%
+                {k.tSec.toFixed(2)}s · {Math.round(k.xPct)},{Math.round(k.yPct)} · {Math.round(k.scale * 100)}% · {Math.round(k.rotation)}°/{Math.round(k.tilt)}°
               </span>
               <button onClick={() => removeKeyframe(clip.id, i)} className="text-we-muted hover:text-red-500 shrink-0" title="Remove keyframe">
                 <X className="w-3.5 h-3.5" />

@@ -31,7 +31,15 @@ interface Props {
   onClose: () => void;
 }
 
-type PresetId = "1080p60" | "1080p30" | "720p60" | "720p30" | "custom" | "aspect-default";
+type PresetId =
+  | "1080p60"
+  | "1080p30"
+  | "shorts60"
+  | "shorts30"
+  | "720p60"
+  | "720p30"
+  | "custom"
+  | "aspect-default";
 
 export function ExportModal({ open, onClose }: Props) {
   const projectName = useEditor((s) => s.project.name);

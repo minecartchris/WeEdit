@@ -4,6 +4,8 @@
 // live in the Timeline toolbar (pushHistory on interaction start so a drag is
 // one undo entry).
 
+import { RotateCcw } from "lucide-react";
+
 interface Props {
   label: string;
   value: number;
@@ -17,6 +19,8 @@ interface Props {
   /** Called once when an edit interaction begins (for history snapshotting). */
   onCommitStart?: () => void;
   onChange: (value: number) => void;
+  /** When set, shows a reset button that snaps the value back to this default. */
+  resetTo?: number;
 }
 
 export function NumberField({
@@ -29,6 +33,7 @@ export function NumberField({
   decimals = 0,
   onCommitStart,
   onChange,
+  resetTo,
 }: Props) {
   const rounded = Number.isFinite(value) ? Number(value.toFixed(decimals)) : 0;
 
@@ -37,9 +42,28 @@ export function NumberField({
     onChange(raw);
   };
 
+  const canReset = resetTo != null && rounded !== Number(resetTo.toFixed(decimals));
+
   return (
     <label className="flex flex-col gap-1 text-xs text-we-ink">
-      <span className="text-we-muted">{label}</span>
+      <div className="flex items-center justify-between">
+        <span className="text-we-muted">{label}</span>
+        {resetTo != null && (
+          <button
+            type="button"
+            onClick={() => {
+              if (!canReset) return;
+              onCommitStart?.();
+              onChange(resetTo);
+            }}
+            disabled={!canReset}
+            title={`Reset to ${Number(resetTo.toFixed(decimals))}${suffix ?? ""}`}
+            className="text-we-muted hover:text-we-ink disabled:opacity-30 p-0.5"
+          >
+            <RotateCcw className="w-3 h-3" />
+          </button>
+        )}
+      </div>
       <div className="flex items-center gap-2">
         <input
           type="range"

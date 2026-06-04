@@ -157,6 +157,7 @@ function TransformProps({ clip }: { clip: MediaClip | TextClip }) {
         step={pixels ? 1 : 0.1}
         decimals={pixels ? 0 : 1}
         suffix={pixels ? "px" : "%"}
+        resetTo={pixels ? pctToPx(50, frameW) : 50}
         onCommitStart={pushHistory}
         onChange={(v) => setTransform(clip.id, { xPct: pixels ? pxToPct(v, frameW) : v })}
       />
@@ -168,6 +169,7 @@ function TransformProps({ clip }: { clip: MediaClip | TextClip }) {
         step={pixels ? 1 : 0.1}
         decimals={pixels ? 0 : 1}
         suffix={pixels ? "px" : "%"}
+        resetTo={pixels ? pctToPx(50, frameH) : 50}
         onCommitStart={pushHistory}
         onChange={(v) => setTransform(clip.id, { yPct: pixels ? pxToPct(v, frameH) : v })}
       />
@@ -178,6 +180,7 @@ function TransformProps({ clip }: { clip: MediaClip | TextClip }) {
         max={Math.round(MAX_SCALE * 100)}
         step={1}
         suffix="%"
+        resetTo={100}
         onCommitStart={pushHistory}
         onChange={(v) => setTransform(clip.id, { scale: v / 100 })}
       />
@@ -188,6 +191,7 @@ function TransformProps({ clip }: { clip: MediaClip | TextClip }) {
         max={180}
         step={1}
         suffix="°"
+        resetTo={0}
         onCommitStart={pushHistory}
         onChange={(v) => updateClip(clip.id, { rotation: v })}
       />
@@ -198,6 +202,7 @@ function TransformProps({ clip }: { clip: MediaClip | TextClip }) {
         max={80}
         step={1}
         suffix="°"
+        resetTo={0}
         onCommitStart={pushHistory}
         onChange={(v) => updateClip(clip.id, { tilt: v })}
       />
@@ -276,6 +281,7 @@ function MediaProps({ clip }: { clip: MediaClip }) {
           min={0}
           max={100}
           suffix="%"
+          resetTo={100}
           onCommitStart={pushHistory}
           onChange={(v) => updateClip(clip.id, { opacity: v / 100 })}
         />
@@ -287,6 +293,7 @@ function MediaProps({ clip }: { clip: MediaClip }) {
           min={0}
           max={100}
           suffix="%"
+          resetTo={100}
           onCommitStart={pushHistory}
           onChange={(v) => updateClip(clip.id, { volume: v / 100 })}
         />

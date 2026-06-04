@@ -204,7 +204,7 @@ function NumberField({
         onKeyDown={(e) => {
           if (e.key === "Enter") (e.target as HTMLInputElement).blur();
         }}
-        className="w-16 rounded border border-we-border bg-we-bg px-2 py-1 text-sm text-we-ink text-right disabled:opacity-40"
+        className="w-16 rounded border border-we-border bg-we-panel px-2 py-1 text-sm text-we-ink text-right disabled:opacity-40"
       />
       <span className="text-xs text-we-muted">{suffix}</span>
     </div>

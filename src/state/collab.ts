@@ -136,6 +136,15 @@ async function connect(
       import("@/lib/collab/mediaSync"),
     ]);
 
+  // Joining adopts someone else's project. Detach from any file the user had
+  // open (e.g. another project) so Ctrl+S / auto-save can't overwrite it with
+  // the collab content — the session is treated as an unsaved project until the
+  // user explicitly Saves As. The host keeps its path (it's sharing its own
+  // project, so saving to it is intended).
+  if (!isHost) {
+    useEditor.setState({ projectPath: null, lastSavedAt: null });
+  }
+
   const session = createSession(roomId);
   const bound = bindEditorToDoc(session.maps, isHost);
   unbind = bound.unbind;

@@ -83,7 +83,7 @@ export function CollabModal({ open, onClose }: Props) {
               value={selfName}
               onChange={(e) => setSelfName(e.target.value)}
               placeholder="Your name"
-              className="w-full rounded border border-we-border bg-we-bg px-2.5 py-1.5 text-sm text-we-ink"
+              className="we-input"
             />
           </label>
         </div>
@@ -96,7 +96,7 @@ export function CollabModal({ open, onClose }: Props) {
                 Session live — share this code to invite editors
               </div>
               <div className="flex items-center gap-2">
-                <code className="flex-1 rounded bg-we-bg border border-we-border px-3 py-2 text-base font-mono tracking-widest text-we-ink text-center select-all">
+                <code className="flex-1 rounded bg-we-panel border border-we-border px-3 py-2 text-base font-mono tracking-widest text-we-ink text-center select-all">
                   {roomId}
                 </code>
                 <button onClick={() => void onCopy()} className="we-btn shrink-0" title="Copy code">
@@ -158,7 +158,7 @@ export function CollabModal({ open, onClose }: Props) {
                   if (e.key === "Enter") void onJoin();
                 }}
                 placeholder="Paste session code"
-                className="flex-1 rounded border border-we-border bg-we-bg px-3 py-2 text-sm font-mono text-we-ink"
+                className="we-input flex-1 min-w-0 font-mono"
               />
               <button
                 onClick={() => void onJoin()}

@@ -35,7 +35,7 @@ export function ClipBlock({ clip, pxPerSec }: ClipBlockProps) {
   const playheadSec = useEditor((s) => s.playheadSec);
 
   const [editingText, setEditingText] = useState(false);
-  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; atSec: number } | null>(null);
 
   const sourceMedia: MediaItem | undefined =
     clip.kind !== "text"
@@ -211,7 +211,12 @@ export function ClipBlock({ clip, pxPerSec }: ClipBlockProps) {
     e.preventDefault();
     e.stopPropagation();
     selectClip(clip.id);
-    setCtxMenu({ x: e.clientX, y: e.clientY });
+    // Timeline-second under the cursor, so "Split" cuts exactly where you
+    // right-clicked rather than at the (possibly far-away) playhead.
+    const rect = e.currentTarget.getBoundingClientRect();
+    const offsetSec = (e.clientX - rect.left) / pxPerSec;
+    const atSec = clip.startSec + Math.max(0, Math.min(clip.durationSec, offsetSec));
+    setCtxMenu({ x: e.clientX, y: e.clientY, atSec });
   };
 
   const left = clip.startSec * pxPerSec;
@@ -270,15 +275,14 @@ export function ClipBlock({ clip, pxPerSec }: ClipBlockProps) {
           <ContextMenuItem
             icon={Scissors}
             onSelect={() => {
-              // Move playhead inside the clip if it isn't already, then split.
-              if (playheadSec <= clip.startSec || playheadSec >= clip.startSec + clip.durationSec) {
-                setPlayhead(clip.startSec + clip.durationSec / 2);
-              }
+              // Split exactly where the user right-clicked. splitAtPlayhead
+              // razors whatever sits under the playhead, so move it there first.
+              setPlayhead(ctxMenu.atSec);
               splitAtPlayhead();
             }}
             shortcut="S"
           >
-            Split at playhead
+            Split here
           </ContextMenuItem>
           {clip.kind === "video" && (
             <ContextMenuItem icon={AudioLines} onSelect={() => detachAudio(clip.id)}>

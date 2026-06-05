@@ -70,6 +70,14 @@ export function ContextMenu({ x, y, onClose, children }: ContextMenuProps) {
       ref={panelRef}
       role="menu"
       onContextMenu={(e) => e.preventDefault()}
+      // The menu is portaled to <body>, but React still bubbles its events
+      // through the component tree to whatever rendered it (e.g. a ClipBlock
+      // whose onPointerDown starts a drag). Stop pointer/mouse/click here so a
+      // menu-item press can't be hijacked into a drag gesture, which would
+      // swallow the item's click and make every action silently no-op.
+      onPointerDown={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+      onClick={(e) => e.stopPropagation()}
       className="fixed z-[1100] min-w-[200px] rounded-md bg-we-panel border border-we-border shadow-lg py-1"
       style={{
         top: pos.ready ? pos.top : -9999,

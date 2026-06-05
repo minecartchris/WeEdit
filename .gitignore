@@ -51,3 +51,6 @@ docs/
 
 # Generated TypeScript build info
 *.tsbuildinfo
+
+# Local Claude Code config & docs (private; not for the repo)
+.claude/

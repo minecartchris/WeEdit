@@ -1,6 +1,7 @@
 import { AudioLines, Diamond, MousePointerSquareDashed, SlidersHorizontal, Volume2, VolumeX, X } from "lucide-react";
 import { NumberField } from "@/components/ui/NumberField";
 import {
+  KEYFRAME_EPSILON,
   MAX_SCALE,
   MAX_TRANSITION_SEC,
   MIN_SCALE,
@@ -213,7 +214,12 @@ function KeyframeProps({ clip }: { clip: MediaClip | TextClip }) {
   const addKeyframe = useEditor((s) => s.addKeyframeAtPlayhead);
   const removeKeyframe = useEditor((s) => s.removeKeyframe);
   const clearKeyframes = useEditor((s) => s.clearKeyframes);
+  const setPlayhead = useEditor((s) => s.setPlayhead);
+  const playheadSec = useEditor((s) => s.playheadSec);
   const kfs = clip.keyframes ?? [];
+  // Which keyframe (if any) the playhead currently sits on — so its row reads
+  // as active and the Properties panel is editing exactly that keyframe.
+  const localT = playheadSec - clip.startSec;
 
   return (
     <section className="flex flex-col gap-2 border-t border-we-border pt-4">
@@ -235,23 +241,33 @@ function KeyframeProps({ clip }: { clip: MediaClip | TextClip }) {
       </button>
       {kfs.length > 0 && (
         <ul className="flex flex-col gap-1">
-          {kfs.map((k, i) => (
-            <li
-              key={i}
-              className="flex items-center justify-between gap-2 text-xs text-we-muted px-2 py-1 rounded hover:bg-we-hover"
-            >
-              <span className="tabular-nums truncate">
-                {k.tSec.toFixed(2)}s · {Math.round(k.xPct)},{Math.round(k.yPct)} · {Math.round(k.scale * 100)}% · {Math.round(k.rotation)}°/{Math.round(k.tilt)}°
-              </span>
-              <button onClick={() => removeKeyframe(clip.id, i)} className="text-we-muted hover:text-red-500 shrink-0" title="Remove keyframe">
-                <X className="w-3.5 h-3.5" />
-              </button>
-            </li>
-          ))}
+          {kfs.map((k, i) => {
+            const active = Math.abs(k.tSec - localT) <= KEYFRAME_EPSILON;
+            return (
+              <li
+                key={i}
+                className={[
+                  "flex items-center justify-between gap-2 text-xs px-2 py-1 rounded",
+                  active ? "bg-we-teal/15 text-we-ink" : "text-we-muted hover:bg-we-hover",
+                ].join(" ")}
+              >
+                <button
+                  onClick={() => setPlayhead(clip.startSec + k.tSec)}
+                  className="flex-1 min-w-0 text-left tabular-nums truncate"
+                  title="Jump the playhead here to edit this keyframe in Properties"
+                >
+                  {k.tSec.toFixed(2)}s · {Math.round(k.xPct)},{Math.round(k.yPct)} · {Math.round(k.scale * 100)}% · {Math.round(k.rotation)}°/{Math.round(k.tilt)}°
+                </button>
+                <button onClick={() => removeKeyframe(clip.id, i)} className="text-we-muted hover:text-red-500 shrink-0" title="Remove keyframe">
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </li>
+            );
+          })}
         </ul>
       )}
       <p className="text-[10px] text-we-muted leading-4">
-        Add 2+ keyframes at different playhead times to animate. Editing the transform updates the keyframe at the playhead.
+        Add 2+ keyframes at different playhead times to animate. Click a keyframe to jump the playhead there; editing the transform then updates that keyframe.
       </p>
     </section>
   );

@@ -245,10 +245,12 @@ def cmd_build_linux(args: argparse.Namespace) -> None:
 
 
 def cmd_upload_linux(args: argparse.Namespace) -> None:
-    """Attach the already-built dist-linux artifacts to this commit's release.
-    Handy for resuming after a Windows release already published but the Linux
-    upload didn't happen (e.g. the AppImage build was fixed and re-run)."""
-    sys.exit(upload_linux_assets(release_tag(), next_release_version()))
+    """Attach the already-built dist-linux artifacts to a GitHub release.
+    Defaults to this commit's tag + version; pass --tag and --version to
+    resume a previous release after a mid-flight fix."""
+    tag = args.tag or release_tag()
+    version = args.release_version or next_release_version()
+    sys.exit(upload_linux_assets(tag, version))
 
 
 def cmd_release(args: argparse.Namespace) -> None:
@@ -321,10 +323,15 @@ def build_parser() -> argparse.ArgumentParser:
                     help="don't auto-install missing Linux build deps")
     ra.set_defaults(func=cmd_release_all)
 
-    sub.add_parser(
+    ul = sub.add_parser(
         "upload-linux",
         help="attach existing dist-linux artifacts to this commit's release",
-    ).set_defaults(func=cmd_upload_linux)
+    )
+    ul.add_argument("--tag", default=None,
+                    help="override the release tag (default: build-<current HEAD sha>)")
+    ul.add_argument("--release-version", default=None, dest="release_version",
+                    help="override the version to match artifacts (default: current base.count)")
+    ul.set_defaults(func=cmd_upload_linux)
 
     return parser
 

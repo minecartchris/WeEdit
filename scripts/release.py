@@ -244,6 +244,13 @@ def cmd_build_linux(args: argparse.Namespace) -> None:
     sys.exit(run_linux_build(distro=args.distro, no_install=args.no_install))
 
 
+def cmd_upload_linux(args: argparse.Namespace) -> None:
+    """Attach the already-built dist-linux artifacts to this commit's release.
+    Handy for resuming after a Windows release already published but the Linux
+    upload didn't happen (e.g. the AppImage build was fixed and re-run)."""
+    sys.exit(upload_linux_assets(release_tag(), next_release_version()))
+
+
 def cmd_release(args: argparse.Namespace) -> None:
     sys.exit(run_windows_release(
         dry_run=args.dry_run, push=args.push, notes=args.notes, key_path=args.key_path))
@@ -313,6 +320,11 @@ def build_parser() -> argparse.ArgumentParser:
     ra.add_argument("--no-install", action="store_true",
                     help="don't auto-install missing Linux build deps")
     ra.set_defaults(func=cmd_release_all)
+
+    sub.add_parser(
+        "upload-linux",
+        help="attach existing dist-linux artifacts to this commit's release",
+    ).set_defaults(func=cmd_upload_linux)
 
     return parser
 

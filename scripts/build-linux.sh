@@ -114,6 +114,12 @@ mkdir -p src-tauri/binaries
 log "npm install (Linux-native deps)"
 npm install
 log "Building Linux bundle $VERSION (.deb + .AppImage) -- this takes a while"
+# linuxdeploy (which Tauri uses to assemble the AppImage) is itself an AppImage
+# and tries to FUSE-mount to run. WSL/containers usually have no FUSE, so it
+# dies with "failed to run linuxdeploy". Extract-and-run skips the mount and the
+# FUSE requirement entirely. ARCH is what the AppImage tooling expects.
+export APPIMAGE_EXTRACT_AND_RUN=1
+export ARCH="${ARCH:-x86_64}"
 # `tauri build` runs the configured beforeBuildCommand (npm run build) itself.
 npx tauri build --bundles deb,appimage
 

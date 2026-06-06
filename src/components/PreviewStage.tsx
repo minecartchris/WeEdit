@@ -1,4 +1,4 @@
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { toPlayableUrl } from "@/lib/media";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { MAX_SCALE, MIN_SCALE, previousClipOnTrack, resolveTransform, type ResolvedTransform } from "@/lib/clips";
 import { useEditor } from "@/state/editor";
@@ -176,7 +176,7 @@ function VideoLayer({
       >
         <video
           ref={ref}
-          src={convertFileSrc(media.src)}
+          src={toPlayableUrl(media.src)}
           playsInline
           preload="auto"
           crossOrigin="anonymous"
@@ -263,7 +263,7 @@ function ExtractedAudioTrack({
   return (
     <audio
       ref={ref}
-      src={convertFileSrc(track.filepath)}
+      src={toPlayableUrl(track.filepath)}
       preload="auto"
       crossOrigin="anonymous"
     />
@@ -289,7 +289,7 @@ function ImageLayer({
       style={{ ...transformStyle(resolveTransform(clip, playheadSec)), ...clipStyle }}
     >
       <img
-        src={convertFileSrc(media.src)}
+        src={toPlayableUrl(media.src)}
         alt=""
         className="w-full h-full object-contain"
         style={{ opacity: clip.opacity * extraOpacity }}
@@ -401,7 +401,7 @@ function AudioLayer({
   return (
     <audio
       ref={ref}
-      src={convertFileSrc(media.src)}
+      src={toPlayableUrl(media.src)}
       preload="auto"
       crossOrigin="anonymous"
     />

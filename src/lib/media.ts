@@ -1,5 +1,4 @@
-import { convertFileSrc } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-dialog";
+import { isTauri } from "@/lib/platform";
 import { extractAudioTracks, ffprobeAudioStreams } from "@/lib/ffmpeg";
 import type { AudioTrackInfo, MediaItem, MediaKind } from "@/types";
 
@@ -21,8 +20,9 @@ export function basename(path: string): string {
   return path.split(/[\\/]/).pop() ?? path;
 }
 
-/** Opens the OS file picker; returns absolute paths the user selected. */
+/** Opens the OS file picker; returns absolute paths the user selected (Tauri only). */
 export async function pickMediaFiles(): Promise<string[]> {
+  const { open } = await import("@tauri-apps/plugin-dialog");
   const result = await open({
     multiple: true,
     filters: [
@@ -34,6 +34,57 @@ export async function pickMediaFiles(): Promise<string[]> {
   });
   if (!result) return [];
   return Array.isArray(result) ? result : [result];
+}
+
+let _convertFileSrc: ((path: string) => string) | null = null;
+
+/**
+ * Resolves a MediaItem.src to a URL the browser can play. On Tauri this
+ * converts a local path via the asset protocol; on web the src is already a
+ * blob: or http: URL so we return it as-is.
+ */
+export function toPlayableUrl(src: string): string {
+  if (!isTauri()) return src;
+  if (!_convertFileSrc) {
+    throw new Error("convertFileSrc not loaded — call initTauriMedia() first");
+  }
+  return _convertFileSrc(src);
+}
+
+export async function initTauriMedia() {
+  if (!isTauri()) return;
+  const { convertFileSrc } = await import("@tauri-apps/api/core");
+  _convertFileSrc = convertFileSrc;
+}
+
+const ACCEPT = SUPPORTED_EXT.map((e) => `.${e}`).join(",");
+
+/** Opens the browser file picker; returns File objects the user selected. */
+export function pickMediaFilesWeb(): Promise<File[]> {
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.multiple = true;
+    input.accept = ACCEPT;
+    input.onchange = () => {
+      resolve(input.files ? Array.from(input.files) : []);
+    };
+    input.click();
+  });
+}
+
+/** Import a browser File into a MediaItem using object URLs. */
+export async function importFile(file: File): Promise<MediaItem | null> {
+  const name = file.name;
+  const kind = classifyByExt(name);
+  if (!kind) return null;
+
+  const id = crypto.randomUUID();
+  const url = URL.createObjectURL(file);
+
+  if (kind === "video") return probeVideo(id, name, url, url);
+  if (kind === "image") return probeImage(id, name, url, url);
+  return probeAudio(id, name, url, url);
 }
 
 /**
@@ -50,6 +101,7 @@ export async function importPath(path: string): Promise<MediaItem | null> {
   if (!kind) return null;
 
   const id = crypto.randomUUID();
+  const { convertFileSrc } = await import("@tauri-apps/api/core");
   const url = convertFileSrc(path);
 
   if (kind === "video") {

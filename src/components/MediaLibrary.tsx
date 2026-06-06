@@ -1,4 +1,4 @@
-import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { isTauri } from "@/lib/platform";
 import {
   ChevronDown,
   Film,
@@ -19,7 +19,8 @@ import { TwitchPanel } from "@/components/TwitchPanel";
 import { Menu, MenuItem, MenuLabel, MenuSeparator } from "@/components/ui/Menu";
 import { isMediaCompatibleWithTrack, makeClipFromMedia } from "@/lib/clips";
 import { startMediaDrag } from "@/lib/customDrag";
-import { importPath, pickMediaFiles } from "@/lib/media";
+import { importFile, importPath, pickMediaFiles, pickMediaFilesWeb } from "@/lib/media";
+import { isWeb } from "@/lib/platform";
 import { formatDuration, useEditor } from "@/state/editor";
 import type { LibraryFilter, MediaItem } from "@/types";
 
@@ -66,18 +67,41 @@ export function MediaLibrary() {
     [addMedia],
   );
 
-  // Tauri-level drag-drop. Fires for the whole window, not just the dropzone —
-  // we just always import. Visual highlight tracks "over" / "leave" / "drop".
-  useEffect(() => {
-    const unlistenP = getCurrentWebview().onDragDropEvent((event) => {
-      const p = event.payload;
-      if (p.type === "over" || p.type === "enter") setDragOver(true);
-      else if (p.type === "leave") setDragOver(false);
-      else if (p.type === "drop") {
-        setDragOver(false);
-        if (p.paths && p.paths.length > 0) void importMany(p.paths);
+  const importFiles = useCallback(
+    async (files: File[]) => {
+      if (files.length === 0) return;
+      setBusy(true);
+      setError(null);
+      try {
+        for (const f of files) {
+          try {
+            const item = await importFile(f);
+            if (item) addMedia(item);
+          } catch (err) {
+            console.warn("Import failed for", f.name, err);
+            setError(`Failed: ${f.name}`);
+          }
+        }
+      } finally {
+        setBusy(false);
       }
-    });
+    },
+    [addMedia],
+  );
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    const unlistenP = import("@tauri-apps/api/webview").then(({ getCurrentWebview }) =>
+      getCurrentWebview().onDragDropEvent((event) => {
+        const p = event.payload;
+        if (p.type === "over" || p.type === "enter") setDragOver(true);
+        else if (p.type === "leave") setDragOver(false);
+        else if (p.type === "drop") {
+          setDragOver(false);
+          if (p.paths && p.paths.length > 0) void importMany(p.paths);
+        }
+      }),
+    );
     return () => {
       unlistenP.then((u) => u()).catch(() => {});
     };
@@ -103,8 +127,13 @@ export function MediaLibrary() {
     source: "device" | "record" | "url" | "twitch" | "nas",
   ) => {
     if (source === "device") {
-      const paths = await pickMediaFiles();
-      void importMany(paths);
+      if (isWeb()) {
+        const files = await pickMediaFilesWeb();
+        void importFiles(files);
+      } else {
+        const paths = await pickMediaFiles();
+        void importMany(paths);
+      }
     } else if (source === "twitch") {
       setLibraryFilter("twitch");
     } else if (source === "nas") {
@@ -235,6 +264,15 @@ export function MediaLibrary() {
           "flex-1 p-4 overflow-auto transition-colors",
           dragOver ? "bg-we-teal/5" : "",
         ].join(" ")}
+        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragOver(false);
+          if (e.dataTransfer.files.length > 0) {
+            void importFiles(Array.from(e.dataTransfer.files));
+          }
+        }}
       >
         <LibraryView tab={tab} items={visible} dragOver={dragOver} onPick={() => handleAddMedia("device")} />
       </div>

@@ -1,4 +1,4 @@
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { isTauri } from "@/lib/platform";
 import {
   Bell,
   FileDown,
@@ -78,7 +78,12 @@ export function TopBar() {
 
   const onClose = async () => {
     try {
-      await getCurrentWindow().close();
+      if (isTauri()) {
+        const { getCurrentWindow } = await import("@tauri-apps/api/window");
+        await getCurrentWindow().close();
+      } else {
+        window.close();
+      }
     } catch (err) {
       console.warn("Failed to close window", err);
     }

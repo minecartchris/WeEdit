@@ -17,9 +17,10 @@ Examples
   python scripts/release.py version              # show base + next release ver
   python scripts/release.py set-version 0.1      # bump base to 0.1 (-> 0.1.0)
   python scripts/release.py set-version 1.2.0    # set full version explicitly
-  python scripts/release.py release --dry-run    # build + sign, don't publish
-  python scripts/release.py release --push       # push HEAD, then publish
+  python scripts/release.py release --dry-run    # Windows build + sign, no publish
+  python scripts/release.py release --push       # push HEAD, then publish (Windows)
   python scripts/release.py release --notes "Fix export crash"
+  python scripts/release.py build-linux          # build .deb + .AppImage via WSL
 """
 
 from __future__ import annotations
@@ -36,6 +37,8 @@ TAURI_CONF = REPO_ROOT / "src-tauri" / "tauri.conf.json"
 CARGO_TOML = REPO_ROOT / "src-tauri" / "Cargo.toml"
 PACKAGE_JSON = REPO_ROOT / "package.json"
 RELEASE_PS1 = REPO_ROOT / "scripts" / "release.ps1"
+BUILD_LINUX_SH = REPO_ROOT / "scripts" / "build-linux.sh"
+DIST_LINUX = REPO_ROOT / "dist-linux"
 
 
 def fail(msg: str) -> "NoReturn":  # type: ignore[name-defined]
@@ -142,6 +145,47 @@ def cmd_set_version(args: argparse.Namespace) -> None:
     print("note: run `cargo update -p weedit` or build once so Cargo.lock picks it up.")
 
 
+def next_release_version() -> str:
+    """The version the next release gets: <base>.<commit-count>."""
+    return f"{base_of(read_current_version())}.{git_commit_count()}"
+
+
+def wslpath(distro: str, win_path: str) -> str:
+    """Convert a Windows path to its /mnt/... path inside the given WSL distro."""
+    out = subprocess.run(
+        ["wsl", "-d", distro, "wslpath", "-a", win_path],
+        capture_output=True, text=True,
+    )
+    if out.returncode != 0:
+        fail(f"wslpath failed for {win_path!r} (is the '{distro}' WSL distro installed?)\n"
+             + out.stderr.strip())
+    return out.stdout.strip()
+
+
+def cmd_build_linux(args: argparse.Namespace) -> None:
+    if not BUILD_LINUX_SH.exists():
+        fail(f"missing {BUILD_LINUX_SH}")
+    distro = args.distro
+    version = next_release_version()
+    DIST_LINUX.mkdir(exist_ok=True)
+
+    src_wsl = wslpath(distro, str(REPO_ROOT))
+    out_wsl = wslpath(distro, str(DIST_LINUX))
+    script_wsl = wslpath(distro, str(BUILD_LINUX_SH))
+
+    print(f"==> building Linux bundle {version} in WSL ({distro})")
+    print(f"    output -> {DIST_LINUX}")
+    cmd = [
+        "wsl", "-d", distro, "env",
+        f"SRC_DIR={src_wsl}",
+        f"VERSION={version}",
+        f"OUT_DIR={out_wsl}",
+        f"AUTO_INSTALL={'0' if args.no_install else '1'}",
+        "bash", script_wsl,
+    ]
+    sys.exit(subprocess.run(cmd, cwd=REPO_ROOT).returncode)
+
+
 def cmd_release(args: argparse.Namespace) -> None:
     if not RELEASE_PS1.exists():
         fail(f"missing {RELEASE_PS1}")
@@ -158,8 +202,7 @@ def cmd_release(args: argparse.Namespace) -> None:
     if args.key_path:
         cmd += ["-KeyPath", args.key_path]
 
-    base = base_of(read_current_version())
-    print(f"==> releasing base {base} (-> {base}.{git_commit_count()}) via release.ps1")
+    print(f"==> releasing {next_release_version()} (Windows) via release.ps1")
     sys.exit(subprocess.run(cmd, cwd=REPO_ROOT).returncode)
 
 
@@ -174,12 +217,18 @@ def build_parser() -> argparse.ArgumentParser:
     sv.add_argument("version", help="new version: X.Y (sets X.Y.0) or X.Y.Z")
     sv.set_defaults(func=cmd_set_version)
 
-    rel = sub.add_parser("release", help="build, sign, and publish a release (via release.ps1)")
+    rel = sub.add_parser("release", help="build, sign, and publish a Windows release (via release.ps1)")
     rel.add_argument("--dry-run", action="store_true", help="build + sign only; don't publish")
     rel.add_argument("--push", action="store_true", help="push HEAD to origin before tagging")
     rel.add_argument("--notes", help="release notes text")
     rel.add_argument("--key-path", help="path to the minisign private key")
     rel.set_defaults(func=cmd_release)
+
+    bl = sub.add_parser("build-linux", help="build a Linux .deb + .AppImage via WSL")
+    bl.add_argument("--distro", default="Ubuntu", help="WSL distro to build in (default: Ubuntu)")
+    bl.add_argument("--no-install", action="store_true",
+                    help="don't auto-install missing build deps; print the commands instead")
+    bl.set_defaults(func=cmd_build_linux)
 
     return parser
 

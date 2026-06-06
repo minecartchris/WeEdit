@@ -9,6 +9,7 @@ lerna-debug.log*
 
 # Build artifacts
 dist/
+dist-web/
 dist-ssr/
 *.local
 

@@ -1,0 +1,214 @@
+/* WeEdit landing page — palette mirrors the editor's dark theme tokens
+   (src/styles.css) so the site and app feel like one product. */
+:root {
+  --teal: rgb(38 184 200);
+  --teal-hover: rgb(80 205 219);
+  --ink: rgb(226 232 240);
+  --muted: rgb(150 158 170);
+  --panel: rgb(30 31 36);
+  --panel-2: rgb(35 37 42);
+  --bg: rgb(18 19 22);
+  --rail: rgb(22 23 26);
+  --border: rgb(51 54 60);
+  --no: rgb(120 128 140);
+}
+
+* { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: inherit; text-decoration: none; }
+
+/* ---- Nav ---- */
+.nav {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.85rem clamp(1rem, 4vw, 3rem);
+  background: rgb(18 19 22 / 0.85);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--border);
+}
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 700;
+  font-size: 1.1rem;
+  letter-spacing: -0.01em;
+}
+.brand img { border-radius: 6px; }
+.nav-links {
+  display: flex;
+  align-items: center;
+  gap: 1.4rem;
+  font-size: 0.95rem;
+}
+.nav-links a:not(.btn):hover { color: var(--teal-hover); }
+.nav-links .btn { margin-left: 0.2rem; }
+
+/* ---- Buttons ---- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.55rem 1rem;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 0.95rem;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+.btn-primary { background: var(--teal); color: #06222a; }
+.btn-primary:hover { background: var(--teal-hover); }
+.btn-ghost { border-color: var(--border); color: var(--ink); background: transparent; }
+.btn-ghost:hover { border-color: var(--teal); color: var(--teal-hover); }
+.btn-lg { padding: 0.8rem 1.4rem; font-size: 1.02rem; }
+
+/* ---- Layout helpers ---- */
+main { display: block; }
+section { padding: clamp(3rem, 7vw, 6rem) clamp(1rem, 6vw, 4rem); }
+h1, h2, h3 { letter-spacing: -0.02em; line-height: 1.15; }
+
+/* ---- Hero ---- */
+.hero {
+  max-width: 880px;
+  margin: 0 auto;
+  text-align: center;
+  padding-top: clamp(3rem, 9vw, 7rem);
+}
+.eyebrow {
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--teal);
+  margin: 0 0 1rem;
+}
+.hero h1 { font-size: clamp(2.3rem, 6vw, 4rem); margin: 0 0 1.2rem; }
+.accent { color: var(--teal); }
+.lede { font-size: clamp(1.05rem, 2.2vw, 1.3rem); color: var(--muted); max-width: 680px; margin: 0 auto 2rem; }
+.cta-row { display: flex; flex-wrap: wrap; gap: 0.8rem; justify-content: center; }
+.hero-sub { color: var(--muted); font-size: 0.9rem; margin-top: 1.2rem; }
+.hero-sub a:hover { color: var(--teal-hover); }
+
+/* ---- Band ---- */
+.band {
+  background: var(--rail);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: 1.4rem clamp(1rem, 6vw, 4rem);
+}
+.band-inner {
+  max-width: 880px;
+  margin: 0 auto;
+  text-align: center;
+  color: var(--muted);
+  font-size: 1rem;
+}
+.band-inner strong { color: var(--ink); }
+.band a { color: var(--teal); }
+.band a:hover { color: var(--teal-hover); }
+
+/* ---- Features ---- */
+.features { max-width: 1100px; margin: 0 auto; }
+.features h2, .compare h2, .final-cta h2 {
+  text-align: center;
+  font-size: clamp(1.7rem, 4vw, 2.4rem);
+  margin: 0 0 2.5rem;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1.1rem;
+}
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.5rem;
+  transition: border-color 0.15s, transform 0.15s;
+}
+.card:hover { border-color: var(--teal); transform: translateY(-2px); }
+.card h3 { margin: 0 0 0.5rem; font-size: 1.15rem; }
+.card p { margin: 0; color: var(--muted); font-size: 0.97rem; }
+
+/* ---- Compare ---- */
+.compare { max-width: 1000px; margin: 0 auto; }
+.compare-lede { text-align: center; color: var(--muted); max-width: 620px; margin: -1.5rem auto 2.5rem; }
+.compare-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1.2rem;
+  align-items: start;
+}
+.compare-col {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 1.8rem;
+  position: relative;
+}
+.compare-col.featured { border-color: var(--teal); box-shadow: 0 0 0 1px var(--teal) inset; }
+.compare-col h3 { margin: 0 0 1.2rem; font-size: 1.4rem; }
+.tag {
+  position: absolute;
+  top: -0.7rem;
+  right: 1.4rem;
+  background: var(--teal);
+  color: #06222a;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+}
+.check-list { list-style: none; padding: 0; margin: 0 0 1.6rem; display: grid; gap: 0.65rem; }
+.check-list li { padding-left: 1.7rem; position: relative; }
+.check-list li.yes::before {
+  content: "✓"; position: absolute; left: 0; color: var(--teal); font-weight: 700;
+}
+.check-list li.no::before {
+  content: "✕"; position: absolute; left: 0; color: var(--no); font-weight: 700;
+}
+.muted-list li.no { color: var(--muted); }
+
+/* ---- Final CTA ---- */
+.final-cta { text-align: center; max-width: 700px; margin: 0 auto; }
+.final-cta p { color: var(--muted); margin: 0 0 1.6rem; }
+.final-cta .hero-sub a { color: var(--teal); }
+
+/* ---- Footer ---- */
+.footer {
+  border-top: 1px solid var(--border);
+  padding: 2rem clamp(1rem, 6vw, 4rem);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6rem;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+.footer .brand { font-size: 1rem; }
+
+@media (max-width: 720px) {
+  .nav-links a:not(.btn):not(.brand) { display: none; }
+  .nav-links { gap: 0.6rem; }
+}

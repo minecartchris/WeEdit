@@ -6,6 +6,7 @@ import { Preview } from "@/components/Preview";
 import { Sidebar } from "@/components/Sidebar";
 import { Timeline } from "@/components/Timeline";
 import { TopBar } from "@/components/TopBar";
+import { WebBanner } from "@/components/WebBanner";
 import { Splitter } from "@/components/ui/Splitter";
 import { useAutoSave } from "@/hooks/useAutoSave";
 import { usePlayback } from "@/hooks/usePlayback";
@@ -39,6 +40,7 @@ export default function App() {
 
   return (
     <div className="h-full w-full flex flex-col">
+      <WebBanner />
       <TopBar />
       <main className="flex-1 min-h-0 flex">
         <Sidebar />

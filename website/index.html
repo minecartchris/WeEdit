@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WeEdit — a desktop-fast video editor for your Twitch VODs</title>
+    <meta
+      name="description"
+      content="WeEdit is a free, local video editor built for trimming and exporting multi-gigabyte Twitch VODs at desktop speed. Download for Windows, or try the editor in your browser."
+    />
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <link rel="preconnect" href="https://api.github.com" />
+    <link rel="stylesheet" href="/styles.css" />
+    <meta property="og:title" content="WeEdit — desktop-fast Twitch VOD editing" />
+    <meta
+      property="og:description"
+      content="A free local video editor for multi-GB Twitch VODs. Download for Windows or try it in your browser."
+    />
+    <meta property="og:type" content="website" />
+  </head>
+  <body>
+    <header class="nav">
+      <a class="brand" href="/">
+        <img src="/logo.png" alt="" width="28" height="28" />
+        <span>WeEdit</span>
+      </a>
+      <nav class="nav-links">
+        <a href="#features">Features</a>
+        <a href="#web-vs-desktop">Web vs desktop</a>
+        <a href="https://github.com/minecartchris/WeEdit" target="_blank" rel="noopener">GitHub</a>
+        <a class="btn btn-ghost" href="/editor/">Open web editor</a>
+        <a class="btn btn-primary" id="nav-download" href="https://github.com/minecartchris/WeEdit/releases/latest">
+          Download
+        </a>
+      </nav>
+    </header>
+
+    <main>
+      <!-- Hero -->
+      <section class="hero">
+        <p class="eyebrow">Free · Local · GPU-accelerated</p>
+        <h1>Edit your Twitch VODs at <span class="accent">desktop speed.</span></h1>
+        <p class="lede">
+          WeEdit is a free video editor built for the thing browser editors choke
+          on: trimming, cutting and exporting multi-gigabyte VODs. Native ffmpeg
+          and your GPU do the heavy lifting — no uploads, no waiting, all local.
+        </p>
+        <div class="cta-row">
+          <a class="btn btn-primary btn-lg" id="hero-download" href="https://github.com/minecartchris/WeEdit/releases/latest">
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 3v10.6l3.3-3.3 1.4 1.4L12 17.4l-4.7-4.7 1.4-1.4 3.3 3.3V3h2zM5 19h14v2H5z"/></svg>
+            <span id="hero-download-label">Download for Windows</span>
+          </a>
+          <a class="btn btn-ghost btn-lg" href="/editor/">
+            Try the editor in your browser →
+          </a>
+        </div>
+        <p class="hero-sub" id="hero-version">Latest release · Windows 10/11</p>
+      </section>
+
+      <!-- Web preview note -->
+      <section class="band">
+        <div class="band-inner">
+          <strong>Want to look before you install?</strong>
+          The <a href="/editor/">web editor</a> runs the real WeEdit interface
+          right in your browser. Export, VOD download, NAS import and saving to
+          disk are desktop-only — that's where the native performance lives.
+        </div>
+      </section>
+
+      <!-- Features -->
+      <section class="features" id="features">
+        <h2>Built for VOD-sized footage</h2>
+        <div class="grid">
+          <article class="card">
+            <h3>Multi-track timeline</h3>
+            <p>Video, audio and text tracks with cut, split, trim, snapping and per-clip volume &amp; opacity.</p>
+          </article>
+          <article class="card">
+            <h3>Pull VODs directly</h3>
+            <p>Sign in with Twitch and download a VOD straight into your library via yt-dlp — no manual exporting.</p>
+          </article>
+          <article class="card">
+            <h3>Native ffmpeg export</h3>
+            <p>Export to MP4 with quality presets and NVENC GPU encoding. Scrub originals; no slow browser transcoding.</p>
+          </article>
+          <article class="card">
+            <h3>Text &amp; overlays</h3>
+            <p>Titles, captions and lower-thirds with live preview, plus stock video, images and royalty-free audio.</p>
+          </article>
+          <article class="card">
+            <h3>Import from anywhere</h3>
+            <p>Local files, drag-and-drop, or connect to a NAS by share or IP to pull footage off your network.</p>
+          </article>
+          <article class="card">
+            <h3>Auto-save &amp; updates</h3>
+            <p>Folder-based projects that save as you work, and a built-in updater that keeps you on the latest build.</p>
+          </article>
+        </div>
+      </section>
+
+      <!-- Web vs desktop -->
+      <section class="compare" id="web-vs-desktop">
+        <h2>Web preview vs. the desktop app</h2>
+        <p class="compare-lede">
+          Same editor, two ways to run it. The browser copy is for trying the
+          interface instantly; the desktop app is the real tool.
+        </p>
+        <div class="compare-grid">
+          <div class="compare-col">
+            <h3>Web editor</h3>
+            <ul class="check-list muted-list">
+              <li class="yes">Full editing interface &amp; timeline</li>
+              <li class="yes">Try it instantly — nothing to install</li>
+              <li class="no">No native ffmpeg export</li>
+              <li class="no">No Twitch / yt-dlp VOD download</li>
+              <li class="no">No NAS import or save-to-disk</li>
+              <li class="no">Not built for multi-GB files</li>
+            </ul>
+            <a class="btn btn-ghost" href="/editor/">Open web editor</a>
+          </div>
+          <div class="compare-col featured">
+            <span class="tag">Recommended</span>
+            <h3>Desktop app</h3>
+            <ul class="check-list">
+              <li class="yes">Everything in the web editor</li>
+              <li class="yes">GPU (NVENC) MP4 export</li>
+              <li class="yes">Direct Twitch VOD download</li>
+              <li class="yes">NAS import &amp; local project files</li>
+              <li class="yes">Handles multi-gigabyte VODs smoothly</li>
+              <li class="yes">Auto-updates to every new release</li>
+            </ul>
+            <a class="btn btn-primary" id="compare-download" href="https://github.com/minecartchris/WeEdit/releases/latest">
+              Download for Windows
+            </a>
+          </div>
+        </div>
+      </section>
+
+      <!-- Bottom CTA -->
+      <section class="final-cta">
+        <h2>Get the desktop app</h2>
+        <p>Free and open. Built for Windows 10/11.</p>
+        <a class="btn btn-primary btn-lg" id="final-download" href="https://github.com/minecartchris/WeEdit/releases/latest">
+          Download WeEdit
+        </a>
+        <p class="hero-sub">
+          <a href="https://github.com/minecartchris/WeEdit/releases" target="_blank" rel="noopener">All releases</a>
+          ·
+          <a href="https://github.com/minecartchris/WeEdit" target="_blank" rel="noopener">Source on GitHub</a>
+        </p>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="brand">
+        <img src="/logo.png" alt="" width="22" height="22" />
+        <span>WeEdit</span>
+      </div>
+      <p>A personal project for editing Twitch VODs locally. Not affiliated with Twitch or WeVideo.</p>
+    </footer>
+
+    <script src="/main.js" defer></script>
+  </body>
+</html>

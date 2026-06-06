@@ -15,32 +15,48 @@ interface LatestRelease {
   assets?: { name: string; browser_download_url: string }[];
 }
 
-/** Pick the Windows installer asset (NSIS .exe preferred, else .msi). */
-function installerUrl(release: LatestRelease): string | null {
-  const assets = release.assets ?? [];
-  const exe = assets.find((a) => /\.exe$/i.test(a.name) && !/\.sig$/i.test(a.name));
-  const msi = assets.find((a) => /\.msi$/i.test(a.name) && !/\.sig$/i.test(a.name));
-  return (exe ?? msi)?.browser_download_url ?? null;
+type Platform = { label: string; url: string };
+
+/** Pick the best installer asset for the visitor's OS (Win .exe, Linux AppImage). */
+function pickInstaller(release: LatestRelease): Platform | null {
+  const assets = (release.assets ?? []).filter((a) => !/\.(sig|json)$/i.test(a.name));
+  const find = (re: RegExp) => assets.find((a) => re.test(a.name)) ?? null;
+  const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
+
+  if (/Linux|X11/i.test(ua) && !/Android/i.test(ua)) {
+    const appimage = find(/\.appimage$/i);
+    if (appimage) return { label: "Download for Linux", url: appimage.browser_download_url };
+    const deb = find(/\.deb$/i);
+    if (deb) return { label: "Download .deb", url: deb.browser_download_url };
+  }
+  const win = find(/\.exe$/i) ?? find(/\.msi$/i);
+  if (win) return { label: "Download for Windows", url: win.browser_download_url };
+  return null;
 }
 
 export function WebBanner() {
   const [dismissed, setDismissed] = useState(false);
   const [version, setVersion] = useState<string | null>(null);
   const [downloadUrl, setDownloadUrl] = useState(LATEST_RELEASE_URL);
+  const [downloadLabel, setDownloadLabel] = useState("Download desktop app");
 
   useEffect(() => {
     if (!isWeb()) return;
     let cancelled = false;
-    // Best-effort: surface the latest version + a direct installer link. If the
-    // GitHub API is unreachable (rate limit, offline), we keep the generic
-    // "latest release" link, which always resolves to the newest build.
+    // Best-effort: surface the latest version + a direct installer link for the
+    // visitor's OS. If the GitHub API is unreachable (rate limit, offline), we
+    // keep the generic "latest release" link, which always resolves to the
+    // newest build for any platform.
     fetch(LATEST_RELEASE_API, { headers: { Accept: "application/vnd.github+json" } })
       .then((r) => (r.ok ? (r.json() as Promise<LatestRelease>) : null))
       .then((release) => {
         if (cancelled || !release) return;
         if (release.tag_name) setVersion(release.tag_name);
-        const direct = installerUrl(release);
-        if (direct) setDownloadUrl(direct);
+        const direct = pickInstaller(release);
+        if (direct) {
+          setDownloadUrl(direct.url);
+          setDownloadLabel(direct.label);
+        }
       })
       .catch(() => {
         /* keep the fallback link */
@@ -66,7 +82,7 @@ export function WebBanner() {
         className="ml-auto shrink-0 inline-flex items-center gap-1.5 rounded bg-white/15 hover:bg-white/25 px-2.5 py-1 font-medium transition-colors"
       >
         <Download size={15} />
-        Download for Windows{version ? ` (${version})` : ""}
+        {downloadLabel}{version ? ` (${version})` : ""}
       </a>
       <button
         onClick={() => setDismissed(true)}

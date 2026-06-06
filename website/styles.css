@@ -189,10 +189,32 @@ h1, h2, h3 { letter-spacing: -0.02em; line-height: 1.15; }
 }
 .muted-list li.no { color: var(--muted); }
 
-/* ---- Final CTA ---- */
-.final-cta { text-align: center; max-width: 700px; margin: 0 auto; }
+/* ---- Final CTA / downloads ---- */
+.final-cta { text-align: center; max-width: 820px; margin: 0 auto; }
 .final-cta p { color: var(--muted); margin: 0 0 1.6rem; }
 .final-cta .hero-sub a { color: var(--teal); }
+
+.dl-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+  margin: 0 auto 1.6rem;
+}
+.dl-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 1.5rem 1.2rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  transition: border-color 0.15s, transform 0.15s, background-color 0.15s;
+}
+.dl-card:hover { border-color: var(--teal); transform: translateY(-2px); background: var(--panel-2); }
+.dl-icon { color: var(--teal); margin-bottom: 0.3rem; }
+.dl-os { font-weight: 700; font-size: 1.05rem; }
+.dl-kind { color: var(--muted); font-size: 0.88rem; }
 
 /* ---- Footer ---- */
 .footer {

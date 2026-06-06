@@ -48,13 +48,16 @@
         <div class="cta-row">
           <a class="btn btn-primary btn-lg" id="hero-download" href="https://github.com/minecartchris/WeEdit/releases/latest">
             <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 3v10.6l3.3-3.3 1.4 1.4L12 17.4l-4.7-4.7 1.4-1.4 3.3 3.3V3h2zM5 19h14v2H5z"/></svg>
-            <span id="hero-download-label">Download for Windows</span>
+            <span id="hero-download-label">Download WeEdit</span>
           </a>
           <a class="btn btn-ghost btn-lg" href="/editor/">
             Try the editor in your browser →
           </a>
         </div>
-        <p class="hero-sub" id="hero-version">Latest release · Windows 10/11</p>
+        <p class="hero-sub" id="hero-version">
+          Latest release · Windows &amp; Linux ·
+          <a href="#downloads">all downloads</a>
+        </p>
       </section>
 
       <!-- Web preview note -->
@@ -129,20 +132,34 @@
               <li class="yes">Handles multi-gigabyte VODs smoothly</li>
               <li class="yes">Auto-updates to every new release</li>
             </ul>
-            <a class="btn btn-primary" id="compare-download" href="https://github.com/minecartchris/WeEdit/releases/latest">
-              Download for Windows
+            <a class="btn btn-primary" id="compare-download" href="#downloads">
+              Download — Windows &amp; Linux
             </a>
           </div>
         </div>
       </section>
 
-      <!-- Bottom CTA -->
-      <section class="final-cta">
-        <h2>Get the desktop app</h2>
-        <p>Free and open. Built for Windows 10/11.</p>
-        <a class="btn btn-primary btn-lg" id="final-download" href="https://github.com/minecartchris/WeEdit/releases/latest">
-          Download WeEdit
-        </a>
+      <!-- Downloads -->
+      <section class="final-cta" id="downloads">
+        <h2>Download WeEdit</h2>
+        <p id="downloads-version">Free and open. Windows 10/11 and Linux (x86-64).</p>
+        <div class="dl-grid">
+          <a class="dl-card" id="dl-windows" href="https://github.com/minecartchris/WeEdit/releases/latest">
+            <svg class="dl-icon" viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path fill="currentColor" d="M3 5.7 10.5 4.6v6.9H3V5.7Zm0 12.6 7.5 1.1v-6.8H3v5.7Zm8.4 1.2L21 21V12.5h-9.6v7Zm0-15.4v7H21V3l-9.6 1.1Z"/></svg>
+            <span class="dl-os">Windows</span>
+            <span class="dl-kind" id="dl-windows-kind">Installer (.exe)</span>
+          </a>
+          <a class="dl-card" id="dl-appimage" href="https://github.com/minecartchris/WeEdit/releases/latest">
+            <svg class="dl-icon" viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm0 3.2 4.6 8H7.4L12 5.2Zm-6 9.6h12L12 21 6 14.8Z"/></svg>
+            <span class="dl-os">Linux</span>
+            <span class="dl-kind" id="dl-appimage-kind">AppImage (portable)</span>
+          </a>
+          <a class="dl-card" id="dl-deb" href="https://github.com/minecartchris/WeEdit/releases/latest">
+            <svg class="dl-icon" viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm0 4.5a3 3 0 1 1 0 6 3 3 0 0 1 0-6Zm0 12.8a7 7 0 0 1-5-2.1c0-2.3 3.3-3.6 5-3.6s5 1.3 5 3.6a7 7 0 0 1-5 2.1Z"/></svg>
+            <span class="dl-os">Debian / Ubuntu</span>
+            <span class="dl-kind" id="dl-deb-kind">Package (.deb)</span>
+          </a>
+        </div>
         <p class="hero-sub">
           <a href="https://github.com/minecartchris/WeEdit/releases" target="_blank" rel="noopener">All releases</a>
           ·

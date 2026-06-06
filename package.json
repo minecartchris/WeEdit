@@ -1,7 +1,7 @@
 {
   "name": "weedit",
   "private": true,
-  "version": "0.0.1",
+  "version": "0.1.1",
   "type": "module",
   "description": "WeEdit — a desktop video editor for Twitch VODs (WeVideo-inspired UI, Tauri + ffmpeg).",
   "scripts": {

@@ -198,11 +198,11 @@ def run_windows_release(*, dry_run: bool, push: bool, notes: str | None,
     return subprocess.run(cmd, cwd=REPO_ROOT).returncode
 
 
-def run_linux_build(*, distro: str, no_install: bool) -> int:
+def run_linux_build(*, distro: str, no_install: bool, version: str | None = None) -> int:
     """Build the Linux .deb + .AppImage in WSL. Returns the child exit code."""
     if not BUILD_LINUX_SH.exists():
         fail(f"missing {BUILD_LINUX_SH}")
-    version = next_release_version()
+    version = version or next_release_version()
     DIST_LINUX.mkdir(exist_ok=True)
 
     src_wsl = wslpath(distro, str(REPO_ROOT))
@@ -241,7 +241,8 @@ def upload_linux_assets(tag: str, version: str) -> int:
 
 
 def cmd_build_linux(args: argparse.Namespace) -> None:
-    sys.exit(run_linux_build(distro=args.distro, no_install=args.no_install))
+    sys.exit(run_linux_build(distro=args.distro, no_install=args.no_install,
+                             version=args.version))
 
 
 def cmd_upload_linux(args: argparse.Namespace) -> None:
@@ -308,6 +309,8 @@ def build_parser() -> argparse.ArgumentParser:
     bl.add_argument("--distro", default="Ubuntu", help="WSL distro to build in (default: Ubuntu)")
     bl.add_argument("--no-install", action="store_true",
                     help="don't auto-install missing build deps; print the commands instead")
+    bl.add_argument("--version", default=None,
+                    help="override the version baked into artifacts (default: base.commit-count)")
     bl.set_defaults(func=cmd_build_linux)
 
     ra = sub.add_parser(

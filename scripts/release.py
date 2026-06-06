@@ -21,6 +21,8 @@ Examples
   python scripts/release.py release --push       # push HEAD, then publish (Windows)
   python scripts/release.py release --notes "Fix export crash"
   python scripts/release.py build-linux          # build .deb + .AppImage via WSL
+  python scripts/release.py release-all --push    # Windows + Linux, one release
+  python scripts/release.py release-all --dry-run # build both, publish nothing
 """
 
 from __future__ import annotations
@@ -162,10 +164,44 @@ def wslpath(distro: str, win_path: str) -> str:
     return out.stdout.strip()
 
 
-def cmd_build_linux(args: argparse.Namespace) -> None:
+def release_tag() -> str:
+    """The GitHub release tag release.ps1 publishes to: build-<short-sha>."""
+    out = subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"],
+        cwd=REPO_ROOT, capture_output=True, text=True,
+    )
+    if out.returncode != 0:
+        fail("git rev-parse failed.\n" + out.stderr.strip())
+    return f"build-{out.stdout.strip()}"
+
+
+def run_windows_release(*, dry_run: bool, push: bool, notes: str | None,
+                        key_path: str | None) -> int:
+    """Build, sign, and (unless dry_run) publish the Windows release via
+    release.ps1. Returns the child process exit code."""
+    if not RELEASE_PS1.exists():
+        fail(f"missing {RELEASE_PS1}")
+    cmd = [
+        "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+        "-File", str(RELEASE_PS1),
+    ]
+    if dry_run:
+        cmd.append("-DryRun")
+    if push:
+        cmd.append("-Push")
+    if notes:
+        cmd += ["-Notes", notes]
+    if key_path:
+        cmd += ["-KeyPath", key_path]
+
+    print(f"==> releasing {next_release_version()} (Windows) via release.ps1")
+    return subprocess.run(cmd, cwd=REPO_ROOT).returncode
+
+
+def run_linux_build(*, distro: str, no_install: bool) -> int:
+    """Build the Linux .deb + .AppImage in WSL. Returns the child exit code."""
     if not BUILD_LINUX_SH.exists():
         fail(f"missing {BUILD_LINUX_SH}")
-    distro = args.distro
     version = next_release_version()
     DIST_LINUX.mkdir(exist_ok=True)
 
@@ -180,30 +216,65 @@ def cmd_build_linux(args: argparse.Namespace) -> None:
         f"SRC_DIR={src_wsl}",
         f"VERSION={version}",
         f"OUT_DIR={out_wsl}",
-        f"AUTO_INSTALL={'0' if args.no_install else '1'}",
+        f"AUTO_INSTALL={'0' if no_install else '1'}",
         "bash", script_wsl,
     ]
-    sys.exit(subprocess.run(cmd, cwd=REPO_ROOT).returncode)
+    return subprocess.run(cmd, cwd=REPO_ROOT).returncode
+
+
+def upload_linux_assets(tag: str, version: str) -> int:
+    """Attach this version's Linux artifacts to the existing GitHub release."""
+    files = sorted(
+        p for pattern in ("*.deb", "*.AppImage")
+        for p in DIST_LINUX.glob(pattern)
+        if version in p.name
+    )
+    if not files:
+        fail(f"no Linux artifacts matching {version} in {DIST_LINUX} to upload.")
+    print(f"==> uploading {len(files)} Linux artifact(s) to release {tag}")
+    for f in files:
+        print(f"    {f.name}")
+    return subprocess.run(
+        ["gh", "release", "upload", tag, *[str(f) for f in files], "--clobber"],
+        cwd=REPO_ROOT,
+    ).returncode
+
+
+def cmd_build_linux(args: argparse.Namespace) -> None:
+    sys.exit(run_linux_build(distro=args.distro, no_install=args.no_install))
 
 
 def cmd_release(args: argparse.Namespace) -> None:
-    if not RELEASE_PS1.exists():
-        fail(f"missing {RELEASE_PS1}")
-    cmd = [
-        "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
-        "-File", str(RELEASE_PS1),
-    ]
-    if args.dry_run:
-        cmd.append("-DryRun")
-    if args.push:
-        cmd.append("-Push")
-    if args.notes:
-        cmd += ["-Notes", args.notes]
-    if args.key_path:
-        cmd += ["-KeyPath", args.key_path]
+    sys.exit(run_windows_release(
+        dry_run=args.dry_run, push=args.push, notes=args.notes, key_path=args.key_path))
 
-    print(f"==> releasing {next_release_version()} (Windows) via release.ps1")
-    sys.exit(subprocess.run(cmd, cwd=REPO_ROOT).returncode)
+
+def cmd_release_all(args: argparse.Namespace) -> None:
+    """Full release: Windows (publishes the GitHub release) + Linux (.deb +
+    .AppImage), then attach the Linux artifacts to that same release."""
+    version = next_release_version()
+    print(f"==> FULL RELEASE {version}: Windows + Linux"
+          + (" (dry run)" if args.dry_run else ""))
+
+    # 1. Windows first -- this is what creates/updates the GitHub release that
+    # the Linux artifacts get attached to.
+    if run_windows_release(dry_run=args.dry_run, push=args.push,
+                           notes=args.notes, key_path=args.key_path) != 0:
+        fail("Windows release failed; aborting before the Linux build.")
+
+    # 2. Linux build (local artifacts in dist-linux/).
+    if run_linux_build(distro=args.distro, no_install=args.no_install) != 0:
+        state = "built" if args.dry_run else "already published"
+        fail(f"Linux build failed. The Windows release is {state}; re-run "
+             f"`build-linux` once fixed, then `gh release upload`.")
+
+    # 3. Attach Linux artifacts to the release (a dry run never published one).
+    if args.dry_run:
+        print("==> dry run: built Windows + Linux locally; nothing uploaded.")
+        return
+    if upload_linux_assets(release_tag(), version) != 0:
+        fail("Linux artifact upload failed.")
+    print(f"==> Full release {version} done -- Windows + Linux at tag {release_tag()}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -229,6 +300,19 @@ def build_parser() -> argparse.ArgumentParser:
     bl.add_argument("--no-install", action="store_true",
                     help="don't auto-install missing build deps; print the commands instead")
     bl.set_defaults(func=cmd_build_linux)
+
+    ra = sub.add_parser(
+        "release-all",
+        help="full release: publish Windows + build Linux + attach Linux artifacts")
+    ra.add_argument("--dry-run", action="store_true",
+                    help="build both locally; don't publish or upload anything")
+    ra.add_argument("--push", action="store_true", help="push HEAD to origin before tagging")
+    ra.add_argument("--notes", help="release notes text")
+    ra.add_argument("--key-path", help="path to the minisign private key (Windows signing)")
+    ra.add_argument("--distro", default="Ubuntu", help="WSL distro for the Linux build (default: Ubuntu)")
+    ra.add_argument("--no-install", action="store_true",
+                    help="don't auto-install missing Linux build deps")
+    ra.set_defaults(func=cmd_release_all)
 
     return parser
 

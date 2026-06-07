@@ -10,6 +10,7 @@ import {
   snapToAnchors,
 } from "@/lib/clips";
 import { useEditor } from "@/state/editor";
+import { useWaveform } from "@/lib/waveform";
 import type { Clip, MediaClip, MediaItem, TextClip } from "@/types";
 
 interface ClipBlockProps {
@@ -366,7 +367,7 @@ function ClipBackground({
   width: number;
 }) {
   if (clip.kind === "audio") {
-    return <AudioBars width={width} />;
+    return <Waveform clip={clip as MediaClip} sourceMedia={sourceMedia} width={width} />;
   }
   if (clip.kind === "text") {
     return null;
@@ -412,25 +413,74 @@ function ClipLabel({
   );
 }
 
-function AudioBars({ width }: { width: number }) {
-  const barCount = Math.max(8, Math.floor(width / 4));
+// Pseudo-random bar heights shown while the real waveform is decoding (or if
+// decoding fails) so the lane doesn't look empty.
+function placeholderHeights(barCount: number): number[] {
   const heights: number[] = [];
   let seed = 1337;
   for (let i = 0; i < barCount; i++) {
     seed = (seed * 9301 + 49297) % 233280;
     heights.push(0.25 + (seed / 233280) * 0.7);
   }
+  return heights;
+}
+
+function WaveformBars({ heights, dim }: { heights: number[]; dim?: boolean }) {
   return (
     <div className="absolute inset-0 flex items-end gap-px px-1 pb-1">
       {heights.map((h, i) => (
         <div
           key={i}
-          className="flex-1 bg-emerald-500/60 rounded-sm"
-          style={{ height: `${h * 100}%` }}
+          className={`flex-1 rounded-sm ${dim ? "bg-emerald-500/30" : "bg-emerald-500/60"}`}
+          style={{ height: `${Math.max(4, h * 100)}%` }}
         />
       ))}
     </div>
   );
+}
+
+/**
+ * Real audio waveform for an audio clip: bar height tracks the source's peak
+ * volume at that point in time (loud → tall, quiet → short), so the user can
+ * spot speech/silence at a glance. Decoding happens off the main render path
+ * (see useWaveform); until it resolves — or if the source can't be decoded —
+ * a dimmed placeholder fills the space.
+ */
+function Waveform({
+  clip,
+  sourceMedia,
+  width,
+}: {
+  clip: MediaClip;
+  sourceMedia: MediaItem | undefined;
+  width: number;
+}) {
+  const waveform = useWaveform(sourceMedia);
+  const barCount = Math.max(8, Math.floor(width / 4));
+
+  if (!waveform) {
+    return <WaveformBars heights={placeholderHeights(barCount)} dim />;
+  }
+
+  const speed = clip.speed ?? 1;
+  const startBucket = clip.sourceInSec * waveform.bucketsPerSec;
+  const bucketSpan = clip.durationSec * speed * waveform.bucketsPerSec;
+
+  const heights: number[] = [];
+  for (let i = 0; i < barCount; i++) {
+    const from = Math.max(0, Math.floor(startBucket + (i / barCount) * bucketSpan));
+    const to = Math.min(
+      waveform.peaks.length,
+      Math.max(from + 1, Math.ceil(startBucket + ((i + 1) / barCount) * bucketSpan)),
+    );
+    let peak = 0;
+    for (let b = from; b < to; b++) {
+      if (waveform.peaks[b] > peak) peak = waveform.peaks[b];
+    }
+    heights.push(peak);
+  }
+
+  return <WaveformBars heights={heights} />;
 }
 
 // Whether a track lane (by kind) accepts a clip of the given kind during a

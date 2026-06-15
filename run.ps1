@@ -23,6 +23,8 @@
 #   ./run.ps1 release:notes --past   # notes for the LAST published release
 #   ./run.ps1 release:notes --past 2 # notes for the release before that
 #   ./run.ps1 release:notes --past --apply  # ...and push them to that release
+#   ./run.ps1 release:notes --all           # preview notes for EVERY release
+#   ./run.ps1 release:notes --all --apply   # backfill notes onto every release
 #   ./run.ps1 dev --port 5000 # extra flags are forwarded to vite
 #
 # Release notes: `release`/`release:win` auto-draft user-facing notes from the
@@ -122,6 +124,36 @@ function Get-ReleaseTag {
     $tags = @(& git tag --list 'build-*' --sort=-creatordate)
     if ($Index -ge 0 -and $Index -lt $tags.Count) { return $tags[$Index] }
     return $null
+}
+
+# Tags of all releases that actually exist on GitHub (newest first). Unlike
+# local build-* tags, this skips tags that were never published as releases.
+function Get-PublishedReleaseTags {
+    if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
+        throw "gh (GitHub CLI) not found on PATH. Install: https://cli.github.com/"
+    }
+    $json = (& gh release list --limit 1000 --json tagName 2>$null)
+    if ($LASTEXITCODE -ne 0 -or -not $json) { return @() }
+    return @(($json | ConvertFrom-Json) | ForEach-Object { $_.tagName } | Where-Object { $_ -like 'build-*' })
+}
+
+# Generate notes for one published release tag (diffing from its previous
+# release, found via `git describe` so non-consecutive tags still work) and,
+# with -Apply, push them onto that GitHub release. Returns $true if notes were
+# produced. Never throws on an individual release -- bulk callers keep going.
+function Update-ReleaseNotes {
+    param([Parameter(Mandatory)][string]$Tag, [switch]$Apply)
+    $base = (& git describe --tags --abbrev=0 --match 'build-*' "$Tag^" 2>$null)
+    $base = if ($LASTEXITCODE -eq 0 -and $base) { $base.Trim() } else { $null }
+    Write-Host "==> Notes for $Tag" -ForegroundColor Cyan
+    $notes = New-ReleaseNotes -Since $base -Until $Tag
+    if (-not $notes) { Write-Host "   (no user-facing notes for $Tag; skipped)" -ForegroundColor Yellow; return $false }
+    Write-Host "`n$notes`n"
+    if ($Apply) {
+        Invoke-Step gh @('release', 'edit', $Tag, '--notes', $notes)
+        Write-Host "==> Updated $Tag on GitHub." -ForegroundColor Green
+    }
+    return $true
 }
 
 # Draft user-facing release notes from the commits since the last release,
@@ -241,42 +273,49 @@ $Tasks = [ordered]@{
             }
             Invoke-Step (Get-PythonExe) (@('scripts/release.py','release') + $relArgs)
         } }
-    'release:notes'   = @{ Desc = 'Preview AI notes. Args: <base-ref> | --past [N] [--apply]'; Run = {
-            # Parse args: --past [N] regenerates notes for the Nth-from-latest
-            # published release (default 1 = the last one). --apply pushes the
-            # generated notes onto that GitHub release via `gh release edit`.
-            # A bare ref is used as the diff base for notes up to HEAD.
-            $past = $false; $apply = $false; $n = 1; $since = $null
+    'release:notes'   = @{ Desc = 'Preview AI notes. Args: <base-ref> | --past [N] | --all [--apply]'; Run = {
+            # Parse args:
+            #   --past [N]  notes for the Nth-from-latest published release (1=last)
+            #   --all       notes for EVERY published GitHub release (backfill)
+            #   --apply     push generated notes onto the release(s) via gh
+            #   <ref>       (bare) diff base for notes up to HEAD
+            $past = $false; $all = $false; $apply = $false; $n = 1; $since = $null
             for ($i = 0; $i -lt @($Rest).Count; $i++) {
                 if ($Rest[$i] -match '^--?past$') {
                     $past = $true
                     if (($i + 1) -lt @($Rest).Count -and $Rest[$i + 1] -match '^\d+$') { $n = [int]$Rest[$i + 1]; $i++ }
-                } elseif ($Rest[$i] -match '^--?apply$') { $apply = $true }
+                } elseif ($Rest[$i] -match '^--?all$') { $all = $true }
+                elseif ($Rest[$i] -match '^--?apply$') { $apply = $true }
                 elseif (-not $since) { $since = $Rest[$i] }
             }
-            if ($apply -and -not $past) {
-                throw "--apply only works with --past (it updates an existing release). For HEAD, run a real release with `./run.ps1 release`."
+            if ($apply -and -not ($past -or $all)) {
+                throw "--apply needs --past or --all (it updates existing releases). For HEAD, run a real release with ./run.ps1 release."
             }
-            $until = $null
-            if ($past) {
-                $until = Get-ReleaseTag -Index ($n - 1)   # the release to describe
-                $base = Get-ReleaseTag -Index $n          # the release before it
-                if (-not $until) { Write-Host "No release tag found $n back." -ForegroundColor Yellow; return }
-                Write-Host "==> Notes for past release $until" -ForegroundColor Cyan
-                $notes = New-ReleaseNotes -Since $base -Until $until
-            } else {
-                $notes = New-ReleaseNotes -Since $since
-            }
-            if (-not $notes) { Write-Host 'No notes generated.' -ForegroundColor Yellow; return }
-            Write-Host "`n$notes`n"
-            if ($apply) {
-                if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
-                    throw "gh (GitHub CLI) not found on PATH; can't apply notes. Install: https://cli.github.com/"
+
+            if ($all) {
+                $tags = Get-PublishedReleaseTags
+                if ($tags.Count -eq 0) { Write-Host 'No published releases found.' -ForegroundColor Yellow; return }
+                $verb = if ($apply) { 'Updating' } else { 'Previewing' }
+                Write-Host "==> $verb notes for $($tags.Count) release(s)..." -ForegroundColor Cyan
+                $done = 0
+                foreach ($t in $tags) {
+                    Write-Host "--- [$($done + 1)/$($tags.Count)] $t ---" -ForegroundColor DarkGray
+                    if (Update-ReleaseNotes -Tag $t -Apply:$apply) { $done++ }
                 }
-                Write-Host "==> Updating release $until notes on GitHub..." -ForegroundColor Cyan
-                Invoke-Step gh @('release', 'edit', $until, '--notes', $notes)
-                Write-Host "==> Updated $until." -ForegroundColor Green
+                Write-Host "==> Backfill complete: $done/$($tags.Count) release(s) had notes." -ForegroundColor Green
+                return
             }
+
+            if ($past) {
+                $until = Get-ReleaseTag -Index ($n - 1)
+                if (-not $until) { Write-Host "No release tag found $n back." -ForegroundColor Yellow; return }
+                [void](Update-ReleaseNotes -Tag $until -Apply:$apply)
+                return
+            }
+
+            # Default: notes for the next release (since the last one) up to HEAD.
+            $notes = New-ReleaseNotes -Since $since
+            if ($notes) { Write-Host "`n$notes`n" } else { Write-Host 'No notes generated.' -ForegroundColor Yellow }
         } }
 }
 

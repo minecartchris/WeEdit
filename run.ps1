@@ -19,7 +19,14 @@
 #   ./run.ps1 release         # publish Windows + Linux (.deb/.AppImage via WSL)
 #   ./run.ps1 release -DryRun # build both without publishing
 #   ./run.ps1 release -Push   # push HEAD to origin, then publish
+#   ./run.ps1 release:notes   # preview the AI-drafted notes only
 #   ./run.ps1 dev --port 5000 # extra flags are forwarded to vite
+#
+# Release notes: `release`/`release:win` auto-draft user-facing notes from the
+# commits since the last release using a local Ollama model (default
+# llama3.2:latest, override via $env:WEEDIT_OLLAMA_MODEL). Pass -Notes "..." to
+# supply your own and skip generation; if ollama is unavailable it silently
+# falls back to release.py's default note.
 #
 # Note: extra args are forwarded verbatim. Don't use a bare `--` separator —
 # PowerShell parses it as an (empty) parameter name and errors out.
@@ -99,6 +106,70 @@ function ConvertTo-ReleaseArgs {
     return $out
 }
 
+# Did the caller already supply their own release notes? If so we don't generate.
+function Test-HasNotesArg {
+    param([string[]]$In)
+    foreach ($a in $In) { if ($a -match '^(-Notes|--notes)$') { return $true } }
+    return $false
+}
+
+# Draft user-facing release notes from the commits since the last release,
+# using a local Ollama model. Returns $null on ANY failure (no ollama, no model,
+# no new commits, empty output) so notes generation never blocks a release --
+# release.py just falls back to its default note in that case.
+# Override the model with $env:WEEDIT_OLLAMA_MODEL.
+function New-ReleaseNotes {
+    $model = if ($env:WEEDIT_OLLAMA_MODEL) { $env:WEEDIT_OLLAMA_MODEL } else { 'llama3.2:latest' }
+    try {
+        if (-not (Get-Command ollama -ErrorAction SilentlyContinue)) {
+            Write-Host "==> ollama not found; falling back to default release notes" -ForegroundColor Yellow
+            return $null
+        }
+        # Commits since the previous release tag (build-*). If HEAD itself is
+        # already tagged (a re-release/resume), look from its parent so we don't
+        # diff against HEAD's own tag and get an empty range. First release (no
+        # such tag yet) -> summarize the last 30 commits instead.
+        $describeRef = 'HEAD'
+        if (@(& git tag --points-at HEAD --list 'build-*').Count -gt 0) { $describeRef = 'HEAD^' }
+        $prev = (& git describe --tags --abbrev=0 --match 'build-*' $describeRef 2>$null)
+        if ($LASTEXITCODE -eq 0 -and $prev) {
+            $log = (& git log --no-merges --pretty=format:'- %s' "$($prev.Trim())..HEAD")
+        } else {
+            $log = (& git log --no-merges -n 30 --pretty=format:'- %s')
+        }
+        if (-not $log) {
+            Write-Host "==> no new commits since last release; using default note" -ForegroundColor Yellow
+            return $null
+        }
+        $commits = ($log -join "`n")
+        $prompt = @"
+You are writing concise, user-facing release notes for WeEdit, a desktop video editor for Twitch VODs.
+Summarize the following git commit subjects into short markdown release notes.
+Group them under '### Added', '### Fixed', and '### Changed' (omit any group that would be empty).
+Write for end users, not developers. Do not mention commit hashes, file names, or internal refactors.
+Output ONLY the markdown notes, with no preamble, sign-off, or explanation.
+
+Commits:
+$commits
+"@
+        Write-Host "==> Drafting release notes with ollama ($model)..." -ForegroundColor Cyan
+        # ollama draws a progress spinner on stderr; we leave it (redirecting a
+        # native command's stderr under ErrorActionPreference=Stop in Windows
+        # PowerShell 5.1 turns it into a terminating error). $notes captures only
+        # stdout, so the spinner is cosmetic and the generated text stays clean.
+        $notes = ($prompt | & ollama run $model)
+        if ($LASTEXITCODE -ne 0 -or -not $notes) {
+            Write-Host "==> ollama returned no notes; using default" -ForegroundColor Yellow
+            return $null
+        }
+        return (($notes -join "`n").Trim())
+    }
+    catch {
+        Write-Host "==> release-notes generation failed: $($_.Exception.Message)" -ForegroundColor Yellow
+        return $null
+    }
+}
+
 # command name -> description + the action to run. Action receives $Rest.
 $Tasks = [ordered]@{
     'install'       = @{ Desc = 'Install npm dependencies';                       Run = { Invoke-Step npm (@('install') + $Rest) } }
@@ -119,10 +190,24 @@ $Tasks = [ordered]@{
     'fetch-binaries'  = @{ Desc = 'Download bundled ffmpeg binaries';             Run = { Invoke-Step npm (@('run','fetch-binaries') + $Rest) } }
     'clean-installers'= @{ Desc = 'Remove stale installer artifacts';            Run = { Invoke-Step npm (@('run','clean-installers') + $Rest) } }
     'release'         = @{ Desc = 'Build, sign & publish a release: Windows + Linux (.deb/.AppImage via WSL)'; Run = {
-            Invoke-Step (Get-PythonExe) (@('scripts/release.py','release-all') + (ConvertTo-ReleaseArgs $Rest))
+            $relArgs = ConvertTo-ReleaseArgs $Rest
+            if (-not (Test-HasNotesArg $Rest)) {
+                $notes = New-ReleaseNotes
+                if ($notes) { $relArgs += @('--notes', $notes) }
+            }
+            Invoke-Step (Get-PythonExe) (@('scripts/release.py','release-all') + $relArgs)
         } }
     'release:win'     = @{ Desc = 'Windows-only release (skip the Linux build)';   Run = {
-            Invoke-Step (Get-PythonExe) (@('scripts/release.py','release') + (ConvertTo-ReleaseArgs $Rest))
+            $relArgs = ConvertTo-ReleaseArgs $Rest
+            if (-not (Test-HasNotesArg $Rest)) {
+                $notes = New-ReleaseNotes
+                if ($notes) { $relArgs += @('--notes', $notes) }
+            }
+            Invoke-Step (Get-PythonExe) (@('scripts/release.py','release') + $relArgs)
+        } }
+    'release:notes'   = @{ Desc = 'Preview the AI release notes without releasing'; Run = {
+            $notes = New-ReleaseNotes
+            if ($notes) { Write-Host "`n$notes`n" } else { Write-Host 'No notes generated.' -ForegroundColor Yellow }
         } }
 }
 

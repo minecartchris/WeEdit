@@ -1,7 +1,7 @@
 #!/usr/bin/env pwsh
 # Build, sign, and publish a WeEdit release to GitHub from your machine.
 #
-# This does locally what .github/workflows/release.yml does in CI: derives a
+# Releases are cut from your machine (there is no CI workflow): this derives a
 # monotonic version from the git commit count, builds the signed installer +
 # updater artifacts, writes latest.json, and publishes a GitHub Release tagged
 # by commit hash. Existing installs auto-update from the "latest" release.
@@ -21,9 +21,7 @@
 #   ...-File scripts/release.ps1 -Push       # push HEAD to its remote first
 #
 # Note: a release tag must point at a commit that exists on GitHub. If HEAD
-# isn't pushed yet, pass -Push (or push it yourself first). Be aware that
-# pushing to main ALSO triggers the CI release for the same commit -- use this
-# script for commits you are NOT pushing to main, or rely on CI for ones you are.
+# isn't pushed yet, pass -Push (or push it yourself first).
 
 [CmdletBinding()]
 param(
@@ -99,7 +97,7 @@ if ($Push) {
 } elseif (-not $DryRun) {
     $onRemote = (& git branch -r --contains HEAD) -join ''
     if (-not $onRemote.Trim()) {
-        throw "This commit isn't on the remote yet, so GitHub can't tag it. Push it first (git push origin HEAD) or re-run with -Push. Pushing main also triggers the CI release."
+        throw "This commit isn't on the remote yet, so GitHub can't tag it. Push it first (git push origin HEAD) or re-run with -Push."
     }
 }
 

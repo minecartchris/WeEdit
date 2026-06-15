@@ -84,7 +84,7 @@ export function PreviewStage({ aspect }: Props) {
       ))}
 
       {activeAudios.map((a) => (
-        <AudioLayer key={`${a.trackId}:${a.media.id}`} {...a} isPlaying={isPlaying} playheadSec={playheadSec} />
+        <AudioLayer key={`${a.trackId}:${a.clip.id}`} {...a} isPlaying={isPlaying} playheadSec={playheadSec} />
       ))}
     </StageFrame>
   );
@@ -110,7 +110,14 @@ function VideoLayer({
   clipStyle?: React.CSSProperties;
 }) {
   const ref = useRef<HTMLVideoElement>(null);
-  const multiTrack = (media.audioTracks?.length ?? 0) > 0;
+  const audioTracks = media.audioTracks ?? [];
+  const mutedTracks = clip.mutedTracks ?? [];
+  // Per-stream audio takeover: only mute the muxed <video> audio and route sound
+  // through individual extracted <audio> siblings when the user has actually
+  // muted at least one track. In the default case (nothing muted) the <video>
+  // plays its own muxed audio — all streams already mixed — so sound never
+  // depends on the extracted tracks loading/playing successfully.
+  const useExtractedAudio = audioTracks.length > 0 && mutedTracks.length > 0;
   const speed = clip.speed ?? 1;
   const pitchPreserved = clip.pitchPreserved ?? true;
 
@@ -153,20 +160,20 @@ function VideoLayer({
     }
   }, [isPlaying]);
 
-  // Volume + opacity. When multi-track is active we mute the muxed audio
-  // entirely — individual <audio> elements (rendered as siblings) carry the
-  // actual sound, so the user can mute each independently.
+  // Volume + opacity. When the user has muted a specific stream we hand audio
+  // off to the extracted <audio> siblings and silence the muxed track; otherwise
+  // the <video> carries the sound itself.
   useEffect(() => {
     const v = ref.current;
     if (!v) return;
-    if (multiTrack) {
+    if (useExtractedAudio) {
       v.muted = true;
       v.volume = 0;
     } else {
       v.volume = volume;
       v.muted = volume <= 0;
     }
-  }, [volume, multiTrack]);
+  }, [volume, useExtractedAudio]);
 
   return (
     <>
@@ -184,13 +191,13 @@ function VideoLayer({
           style={{ opacity: clip.opacity * extraOpacity }}
         />
       </div>
-      {multiTrack &&
-        media.audioTracks!.map((t) => (
+      {useExtractedAudio &&
+        audioTracks.map((t) => (
           <ExtractedAudioTrack
             key={t.index}
             track={t}
             clip={clip}
-            muted={(clip.mutedTracks ?? []).includes(t.index)}
+            muted={mutedTracks.includes(t.index)}
             isPlaying={isPlaying}
             playheadSec={playheadSec}
             trackVolume={volume}
@@ -672,11 +679,16 @@ function collectActiveAudios(
 ): ActiveAudio[] {
   const out: ActiveAudio[] = [];
   for (const track of tracks) {
-    if (track.kind !== "audio") continue;
+    // Collect audio from dedicated audio tracks AND from video tracks that have
+    // had their audio detached (kind === "audio" clips sitting on a video track).
+    // Previously this skipped all non-"audio" tracks, silencing detached audio.
+    if (track.kind !== "audio" && track.kind !== "video") continue;
     if (track.muted) continue;
     for (const cid of track.clipIds) {
       const c = clips[cid];
-      if (!c || c.kind === "text") continue;
+      // Only process audio-kind clips here; video clips handle their own audio
+      // via the <video> element (or ExtractedAudioTrack for multi-stream).
+      if (!c || c.kind !== "audio") continue;
       if (c.startSec <= playheadSec && playheadSec < c.startSec + c.durationSec) {
         const m = media.find((mm) => mm.id === (c as MediaClip).mediaId);
         if (!m) continue;

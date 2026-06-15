@@ -22,6 +22,7 @@
 #   ./run.ps1 release:notes   # preview the AI-drafted notes only
 #   ./run.ps1 release:notes --past   # notes for the LAST published release
 #   ./run.ps1 release:notes --past 2 # notes for the release before that
+#   ./run.ps1 release:notes --past --apply  # ...and push them to that release
 #   ./run.ps1 dev --port 5000 # extra flags are forwarded to vite
 #
 # Release notes: `release`/`release:win` auto-draft user-facing notes from the
@@ -240,17 +241,23 @@ $Tasks = [ordered]@{
             }
             Invoke-Step (Get-PythonExe) (@('scripts/release.py','release') + $relArgs)
         } }
-    'release:notes'   = @{ Desc = 'Preview AI notes. Args: <base-ref> | --past [N] for a past release'; Run = {
+    'release:notes'   = @{ Desc = 'Preview AI notes. Args: <base-ref> | --past [N] [--apply]'; Run = {
             # Parse args: --past [N] regenerates notes for the Nth-from-latest
-            # published release (default 1 = the last one). A bare ref is used
-            # as the diff base for notes up to HEAD.
-            $past = $false; $n = 1; $since = $null
+            # published release (default 1 = the last one). --apply pushes the
+            # generated notes onto that GitHub release via `gh release edit`.
+            # A bare ref is used as the diff base for notes up to HEAD.
+            $past = $false; $apply = $false; $n = 1; $since = $null
             for ($i = 0; $i -lt @($Rest).Count; $i++) {
                 if ($Rest[$i] -match '^--?past$') {
                     $past = $true
                     if (($i + 1) -lt @($Rest).Count -and $Rest[$i + 1] -match '^\d+$') { $n = [int]$Rest[$i + 1]; $i++ }
-                } elseif (-not $since) { $since = $Rest[$i] }
+                } elseif ($Rest[$i] -match '^--?apply$') { $apply = $true }
+                elseif (-not $since) { $since = $Rest[$i] }
             }
+            if ($apply -and -not $past) {
+                throw "--apply only works with --past (it updates an existing release). For HEAD, run a real release with `./run.ps1 release`."
+            }
+            $until = $null
             if ($past) {
                 $until = Get-ReleaseTag -Index ($n - 1)   # the release to describe
                 $base = Get-ReleaseTag -Index $n          # the release before it
@@ -260,7 +267,16 @@ $Tasks = [ordered]@{
             } else {
                 $notes = New-ReleaseNotes -Since $since
             }
-            if ($notes) { Write-Host "`n$notes`n" } else { Write-Host 'No notes generated.' -ForegroundColor Yellow }
+            if (-not $notes) { Write-Host 'No notes generated.' -ForegroundColor Yellow; return }
+            Write-Host "`n$notes`n"
+            if ($apply) {
+                if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
+                    throw "gh (GitHub CLI) not found on PATH; can't apply notes. Install: https://cli.github.com/"
+                }
+                Write-Host "==> Updating release $until notes on GitHub..." -ForegroundColor Cyan
+                Invoke-Step gh @('release', 'edit', $until, '--notes', $notes)
+                Write-Host "==> Updated $until." -ForegroundColor Green
+            }
         } }
 }
 

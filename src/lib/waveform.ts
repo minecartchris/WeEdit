@@ -18,6 +18,22 @@ const BUCKETS_PER_SEC = 50;
 // resolution rather than growing the array unbounded.
 const MAX_BUCKETS = 200_000;
 
+// Decoding pulls the ENTIRE source into memory (fetch → ArrayBuffer →
+// decodeAudioData → PCM). For a multi-hour Twitch VOD that's gigabytes and
+// crashes the WebView2 renderer outright — which is exactly what happens after
+// "Detach audio", since the detached audio clip points at the original (huge)
+// video file. So skip the real waveform past a safe duration and let the
+// placeholder bars stand in. Video sources also carry the video bitstream in
+// the bytes we fetch, so they get a tighter cap than audio-only sources.
+const MAX_AUDIO_SOURCE_SEC = 30 * 60;
+const MAX_VIDEO_SOURCE_SEC = 10 * 60;
+
+/** Whether a source is small enough to decode client-side without risking OOM. */
+function isWaveformSafe(media: MediaItem): boolean {
+  const cap = media.kind === "video" ? MAX_VIDEO_SOURCE_SEC : MAX_AUDIO_SOURCE_SEC;
+  return media.durationSec != null && media.durationSec > 0 && media.durationSec <= cap;
+}
+
 const cache = new Map<string, WaveformData>();
 const inFlight = new Map<string, Promise<WaveformData | null>>();
 
@@ -70,6 +86,9 @@ async function decode(media: MediaItem): Promise<WaveformData | null> {
 function loadWaveform(media: MediaItem): Promise<WaveformData | null> {
   const cached = cache.get(media.id);
   if (cached) return Promise.resolve(cached);
+
+  // Bail before fetching anything for sources too large to decode safely.
+  if (!isWaveformSafe(media)) return Promise.resolve(null);
 
   let pending = inFlight.get(media.id);
   if (!pending) {

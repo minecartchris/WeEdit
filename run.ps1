@@ -115,39 +115,50 @@ function Test-HasNotesArg {
 
 # Draft user-facing release notes from the commits since the last release,
 # using a local Ollama model. Returns $null on ANY failure (no ollama, no model,
-# no new commits, empty output) so notes generation never blocks a release --
-# release.py just falls back to its default note in that case.
-# Override the model with $env:WEEDIT_OLLAMA_MODEL.
+# no new commits, no user-facing changes) so notes generation never blocks a
+# release -- release.py just falls back to its default note in that case.
+# Pass -Since <ref> to summarize commits since a specific tag/commit instead of
+# auto-detecting the last release. Override the model with $env:WEEDIT_OLLAMA_MODEL.
 function New-ReleaseNotes {
+    param([string]$Since)
     $model = if ($env:WEEDIT_OLLAMA_MODEL) { $env:WEEDIT_OLLAMA_MODEL } else { 'llama3.2:latest' }
     try {
         if (-not (Get-Command ollama -ErrorAction SilentlyContinue)) {
             Write-Host "==> ollama not found; falling back to default release notes" -ForegroundColor Yellow
             return $null
         }
-        # Commits since the previous release tag (build-*). If HEAD itself is
-        # already tagged (a re-release/resume), look from its parent so we don't
-        # diff against HEAD's own tag and get an empty range. First release (no
-        # such tag yet) -> summarize the last 30 commits instead.
-        $describeRef = 'HEAD'
-        if (@(& git tag --points-at HEAD --list 'build-*').Count -gt 0) { $describeRef = 'HEAD^' }
-        $prev = (& git describe --tags --abbrev=0 --match 'build-*' $describeRef 2>$null)
-        if ($LASTEXITCODE -eq 0 -and $prev) {
-            $log = (& git log --no-merges --pretty=format:'- %s' "$($prev.Trim())..HEAD")
+        # Determine the commit range. With -Since, diff against that ref. Else
+        # use the previous release tag (build-*); if HEAD itself is already
+        # tagged (a re-release/resume), look from its parent so we don't diff
+        # against HEAD's own tag and get an empty range. First release (no such
+        # tag yet) -> summarize the last 30 commits instead.
+        if ($Since) {
+            $base = $Since
+        } else {
+            $describeRef = 'HEAD'
+            if (@(& git tag --points-at HEAD --list 'build-*').Count -gt 0) { $describeRef = 'HEAD^' }
+            $prev = (& git describe --tags --abbrev=0 --match 'build-*' $describeRef 2>$null)
+            $base = if ($LASTEXITCODE -eq 0 -and $prev) { $prev.Trim() } else { $null }
+        }
+        if ($base) {
+            $log = (& git log --no-merges --pretty=format:'- %s' "$base..HEAD")
         } else {
             $log = (& git log --no-merges -n 30 --pretty=format:'- %s')
         }
+        $baseLabel = if ($base) { $base } else { 'the last release' }
         if (-not $log) {
-            Write-Host "==> no new commits since last release; using default note" -ForegroundColor Yellow
+            Write-Host "==> no new commits since $baseLabel; using default note" -ForegroundColor Yellow
             return $null
         }
         $commits = ($log -join "`n")
+        $rangeLabel = if ($base) { $base } else { 'HEAD~30' }
+        Write-Host "==> Summarizing $(@($log).Count) commit(s) since $rangeLabel" -ForegroundColor DarkGray
         $prompt = @"
 You are writing concise, user-facing release notes for WeEdit, a desktop video editor for Twitch VODs.
 Summarize the following git commit subjects into short markdown release notes.
 Group them under '### Added', '### Fixed', and '### Changed' (omit any group that would be empty).
-Write for end users, not developers. Do not mention commit hashes, file names, or internal refactors.
-Output ONLY the markdown notes, with no preamble, sign-off, or explanation.
+Write for end users, not developers. Keep developer-tooling/build-script commits brief but DO include them under Changed rather than dropping them entirely.
+Do not mention commit hashes or file paths. Output ONLY the markdown notes, with no preamble, sign-off, or explanation.
 
 Commits:
 $commits
@@ -158,11 +169,22 @@ $commits
         # PowerShell 5.1 turns it into a terminating error). $notes captures only
         # stdout, so the spinner is cosmetic and the generated text stays clean.
         $notes = ($prompt | & ollama run $model)
-        if ($LASTEXITCODE -ne 0 -or -not $notes) {
+        # ollama streams tokens to stdout and occasionally interleaves ANSI
+        # cursor codes (e.g. backspace corrections like ESC[5D ESC[K). Strip all
+        # CSI escape sequences so they don't end up in the published notes.
+        $clean = ((($notes -join "`n") -replace "\x1B\[[0-?]*[ -/]*[@-~]", '').Trim())
+        if ($LASTEXITCODE -ne 0 -or -not $clean) {
             Write-Host "==> ollama returned no notes; using default" -ForegroundColor Yellow
             return $null
         }
-        return (($notes -join "`n").Trim())
+        # Guard against header-only output: if the model filtered every commit
+        # out, there's nothing but '### Added' lines left. Treat that as no notes.
+        $body = @($clean -split "`n" | Where-Object { $_.Trim() -and $_ -notmatch '^\s*#{1,6}\s' })
+        if ($body.Count -eq 0) {
+            Write-Host "==> no user-facing changes in that range; using default note" -ForegroundColor Yellow
+            return $null
+        }
+        return $clean
     }
     catch {
         Write-Host "==> release-notes generation failed: $($_.Exception.Message)" -ForegroundColor Yellow
@@ -205,8 +227,9 @@ $Tasks = [ordered]@{
             }
             Invoke-Step (Get-PythonExe) (@('scripts/release.py','release') + $relArgs)
         } }
-    'release:notes'   = @{ Desc = 'Preview the AI release notes without releasing'; Run = {
-            $notes = New-ReleaseNotes
+    'release:notes'   = @{ Desc = 'Preview AI release notes (optional: a base tag/ref to diff from)'; Run = {
+            $since = if ($Rest -and $Rest.Count -ge 1) { $Rest[0] } else { $null }
+            $notes = New-ReleaseNotes -Since $since
             if ($notes) { Write-Host "`n$notes`n" } else { Write-Host 'No notes generated.' -ForegroundColor Yellow }
         } }
 }

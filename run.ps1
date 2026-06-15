@@ -118,6 +118,23 @@ function Test-HasNotesArg {
     return $false
 }
 
+# Run git and return its stdout (trimmed), or $null on non-zero exit. Native
+# stderr is discarded WITHOUT aborting the script: redirecting a native command's
+# stderr under ErrorActionPreference=Stop in Windows PowerShell 5.1 otherwise
+# raises a terminating error (e.g. `git describe` on the very first release,
+# whose parent has no prior tag, writes "fatal: No tags can describe ...").
+function Get-GitOutput {
+    param([Parameter(Mandatory)][string[]]$GitArgs)
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $out = (& git @GitArgs 2>$null)
+        if ($LASTEXITCODE -ne 0 -or -not $out) { return $null }
+        return (($out -join "`n").Trim())
+    }
+    finally { $ErrorActionPreference = $prev }
+}
+
 # The Nth most recent published release tag (0 = latest). $null if out of range.
 function Get-ReleaseTag {
     param([int]$Index = 0)
@@ -143,8 +160,7 @@ function Get-PublishedReleaseTags {
 # produced. Never throws on an individual release -- bulk callers keep going.
 function Update-ReleaseNotes {
     param([Parameter(Mandatory)][string]$Tag, [switch]$Apply)
-    $base = (& git describe --tags --abbrev=0 --match 'build-*' "$Tag^" 2>$null)
-    $base = if ($LASTEXITCODE -eq 0 -and $base) { $base.Trim() } else { $null }
+    $base = Get-GitOutput @('describe', '--tags', '--abbrev=0', '--match', 'build-*', "$Tag^")
     Write-Host "==> Notes for $Tag" -ForegroundColor Cyan
     $notes = New-ReleaseNotes -Since $base -Until $Tag
     if (-not $notes) { Write-Host "   (no user-facing notes for $Tag; skipped)" -ForegroundColor Yellow; return $false }
@@ -181,8 +197,7 @@ function New-ReleaseNotes {
         } elseif ($Until -eq 'HEAD') {
             $describeRef = 'HEAD'
             if (@(& git tag --points-at HEAD --list 'build-*').Count -gt 0) { $describeRef = 'HEAD^' }
-            $prev = (& git describe --tags --abbrev=0 --match 'build-*' $describeRef 2>$null)
-            $base = if ($LASTEXITCODE -eq 0 -and $prev) { $prev.Trim() } else { $null }
+            $base = Get-GitOutput @('describe', '--tags', '--abbrev=0', '--match', 'build-*', $describeRef)
         } else {
             $base = $null
         }
@@ -297,10 +312,16 @@ $Tasks = [ordered]@{
                 if ($tags.Count -eq 0) { Write-Host 'No published releases found.' -ForegroundColor Yellow; return }
                 $verb = if ($apply) { 'Updating' } else { 'Previewing' }
                 Write-Host "==> $verb notes for $($tags.Count) release(s)..." -ForegroundColor Cyan
-                $done = 0
+                $done = 0; $idx = 0
                 foreach ($t in $tags) {
-                    Write-Host "--- [$($done + 1)/$($tags.Count)] $t ---" -ForegroundColor DarkGray
-                    if (Update-ReleaseNotes -Tag $t -Apply:$apply) { $done++ }
+                    $idx++
+                    Write-Host "--- [$idx/$($tags.Count)] $t ---" -ForegroundColor DarkGray
+                    try {
+                        if (Update-ReleaseNotes -Tag $t -Apply:$apply) { $done++ }
+                    }
+                    catch {
+                        Write-Host "   (failed for ${t}: $($_.Exception.Message))" -ForegroundColor Yellow
+                    }
                 }
                 Write-Host "==> Backfill complete: $done/$($tags.Count) release(s) had notes." -ForegroundColor Green
                 return

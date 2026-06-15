@@ -172,6 +172,71 @@ function Update-ReleaseNotes {
     return $true
 }
 
+# Run a prompt through Ollama and return the completion text. Prefers the local
+# HTTP API (non-streaming -> clean text, no terminal control codes), and falls
+# back to the `ollama run` CLI (stripping ANSI cursor codes) if the server isn't
+# reachable. Returns $null on failure.
+function Invoke-Ollama {
+    param([Parameter(Mandatory)][string]$Model, [Parameter(Mandatory)][string]$Prompt)
+    # 1. HTTP API -- the reliable path. stream=$false returns the whole response
+    # in one JSON payload, so there are none of the cursor/rewrap artifacts the
+    # CLI emits when it streams to a terminal.
+    try {
+        $body = @{
+            model   = $Model
+            prompt  = $Prompt
+            stream  = $false
+            options = @{ temperature = 0.2 }
+        } | ConvertTo-Json -Depth 5
+        $resp = Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:11434/api/generate' `
+            -Body $body -ContentType 'application/json' -TimeoutSec 600
+        if ($resp.response) { return ([string]$resp.response).Trim() }
+    }
+    catch { }  # server not running / unreachable -> try the CLI
+    # 2. CLI fallback. ollama interleaves ANSI cursor codes on a TTY; strip them.
+    try {
+        $out = ($Prompt | & ollama run $Model)
+        $clean = ((($out -join "`n") -replace "\x1B\[[0-?]*[ -/]*[@-~]", '').Trim())
+        if ($clean) { return $clean }
+    }
+    catch { }
+    return $null
+}
+
+# Clean up small-model output into tidy notes: normalize bullets, strip commit-
+# type prefixes and stray sub-headers, drop placeholder/no-op bullets, and remove
+# any '### Added/Fixed/Changed' section left with no bullets under it.
+function Format-ReleaseNotes {
+    param([Parameter(Mandatory)][string]$Text)
+    $out = New-Object System.Collections.Generic.List[string]
+    foreach ($raw in ($Text -split "`r?`n")) {
+        $l = $raw.Trim()
+        if (-not $l) { $out.Add(''); continue }
+        if ($l -match '^#{1,6}\s*(Added|Fixed|Changed)\s*:?\s*$') { $out.Add("### $($Matches[1])"); continue }
+        # Bullet, or a stray sub-heading/plain line we coerce into a bullet.
+        $item = $l
+        if ($item -match '^\s*[\*\-•]\s+(.*)$') { $item = $Matches[1] }
+        $item = ($item -replace '^#{1,6}\s*', '').Trim()                       # stray ### inside a bullet
+        $item = ($item -replace '^(feat|fix|chore|docs|refactor|build|ci|perf|style|test)(\([^)]*\))?:\s*', '').Trim()  # commit prefix
+        if (-not $item) { continue }
+        if ($item -match '^[\(\[]?\s*(no\b.*chang|none|n/?a|nothing\b)') { continue }  # placeholder/no-op
+        $out.Add("- " + ($item -replace '\s+', ' '))
+    }
+    # Drop section headers that have no bullet before the next header.
+    $kept = New-Object System.Collections.Generic.List[string]
+    for ($i = 0; $i -lt $out.Count; $i++) {
+        if ($out[$i] -match '^### ') {
+            $has = $false
+            for ($j = $i + 1; $j -lt $out.Count -and $out[$j] -notmatch '^### '; $j++) {
+                if ($out[$j] -match '^- ') { $has = $true; break }
+            }
+            if (-not $has) { continue }
+        }
+        $kept.Add($out[$i])
+    }
+    return ((($kept -join "`n") -replace "`n{3,}", "`n`n").Trim())
+}
+
 # Draft user-facing release notes from the commits since the last release,
 # using a local Ollama model. Returns $null on ANY failure (no ollama, no model,
 # no new commits, no user-facing changes) so notes generation never blocks a
@@ -211,37 +276,44 @@ function New-ReleaseNotes {
             Write-Host "==> no new commits since $baseLabel; using default note" -ForegroundColor Yellow
             return $null
         }
+        # Drop clearly-internal commits before the model sees them, so build/CI/
+        # tooling noise can't leak into user-facing notes. If that leaves nothing,
+        # there were no user-facing changes -> caller uses the default note.
+        $internal = '(?i)(^- (chore|ci|build|refactor|test|docs|style)(\(|:))|gitignore|github actions|workflow|bump.*version|version.*bump|release\.(ps1|py)|run\.ps1|tauri\.conf|signing key|updater'
+        $userLog = @($log | Where-Object { $_ -notmatch $internal })
+        if ($userLog.Count -eq 0) {
+            Write-Host "==> only internal/tooling commits in that range; using default note" -ForegroundColor Yellow
+            return $null
+        }
+        $log = $userLog
         $commits = ($log -join "`n")
         $rangeLabel = if ($base) { "$base..$Until" } else { "$Until~30..$Until" }
         Write-Host "==> Summarizing $(@($log).Count) commit(s) ($rangeLabel)" -ForegroundColor DarkGray
         $prompt = @"
-You are writing concise, user-facing release notes for WeEdit, a desktop video editor for Twitch VODs.
-Summarize the following git commit subjects into short markdown release notes.
-Group them under '### Added', '### Fixed', and '### Changed' (omit any group that would be empty).
-Write for end users, not developers. Keep developer-tooling/build-script commits brief but DO include them under Changed rather than dropping them entirely.
-Do not mention commit hashes or file paths. Output ONLY the markdown notes, with no preamble, sign-off, or explanation.
+You write release notes for WeEdit, a desktop video editor for Twitch VODs. The audience is END USERS.
+Turn the commit subjects below into short markdown release notes.
+
+Rules:
+- Use only these section headers, in this exact order: '### Added', '### Fixed', '### Changed'.
+- Under each header, write plain '- ' bullets: one short sentence per change, describing what the user can now see or do.
+- OMIT a whole section if it has no items. Never invent content and never write placeholder bullets like "No changes".
+- Only include user-facing changes. IGNORE internal/developer commits entirely: build/release scripts, CI or GitHub Actions, version bumps, .gitignore, config files, and pure refactors.
+- Do NOT include commit prefixes (feat:, fix:, chore:), commit hashes, file names, or sub-headings (no '####').
+- Output ONLY the markdown. No preamble, no explanation, no closing remarks.
 
 Commits:
 $commits
 "@
         Write-Host "==> Drafting release notes with ollama ($model)..." -ForegroundColor Cyan
-        # ollama draws a progress spinner on stderr; we leave it (redirecting a
-        # native command's stderr under ErrorActionPreference=Stop in Windows
-        # PowerShell 5.1 turns it into a terminating error). $notes captures only
-        # stdout, so the spinner is cosmetic and the generated text stays clean.
-        $notes = ($prompt | & ollama run $model)
-        # ollama streams tokens to stdout and occasionally interleaves ANSI
-        # cursor codes (e.g. backspace corrections like ESC[5D ESC[K). Strip all
-        # CSI escape sequences so they don't end up in the published notes.
-        $clean = ((($notes -join "`n") -replace "\x1B\[[0-?]*[ -/]*[@-~]", '').Trim())
-        if ($LASTEXITCODE -ne 0 -or -not $clean) {
+        $clean = Invoke-Ollama -Model $model -Prompt $prompt
+        if (-not $clean) {
             Write-Host "==> ollama returned no notes; using default" -ForegroundColor Yellow
             return $null
         }
-        # Guard against header-only output: if the model filtered every commit
-        # out, there's nothing but '### Added' lines left. Treat that as no notes.
-        $body = @($clean -split "`n" | Where-Object { $_.Trim() -and $_ -notmatch '^\s*#{1,6}\s' })
-        if ($body.Count -eq 0) {
+        $clean = Format-ReleaseNotes -Text $clean
+        # If the model filtered every commit out (no bullets survived), treat as
+        # no user-facing changes.
+        if (@($clean -split "`n" | Where-Object { $_ -match '^- ' }).Count -eq 0) {
             Write-Host "==> no user-facing changes in that range; using default note" -ForegroundColor Yellow
             return $null
         }

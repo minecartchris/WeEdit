@@ -20,6 +20,8 @@
 #   ./run.ps1 release -DryRun # build both without publishing
 #   ./run.ps1 release -Push   # push HEAD to origin, then publish
 #   ./run.ps1 release:notes   # preview the AI-drafted notes only
+#   ./run.ps1 release:notes --past   # notes for the LAST published release
+#   ./run.ps1 release:notes --past 2 # notes for the release before that
 #   ./run.ps1 dev --port 5000 # extra flags are forwarded to vite
 #
 # Release notes: `release`/`release:win` auto-draft user-facing notes from the
@@ -113,37 +115,48 @@ function Test-HasNotesArg {
     return $false
 }
 
+# The Nth most recent published release tag (0 = latest). $null if out of range.
+function Get-ReleaseTag {
+    param([int]$Index = 0)
+    $tags = @(& git tag --list 'build-*' --sort=-creatordate)
+    if ($Index -ge 0 -and $Index -lt $tags.Count) { return $tags[$Index] }
+    return $null
+}
+
 # Draft user-facing release notes from the commits since the last release,
 # using a local Ollama model. Returns $null on ANY failure (no ollama, no model,
 # no new commits, no user-facing changes) so notes generation never blocks a
 # release -- release.py just falls back to its default note in that case.
-# Pass -Since <ref> to summarize commits since a specific tag/commit instead of
-# auto-detecting the last release. Override the model with $env:WEEDIT_OLLAMA_MODEL.
+# Pass -Since <ref> to summarize commits since a specific tag/commit, and
+# -Until <ref> to set the endpoint (default HEAD; used by --past to regenerate
+# notes for a past release). Override the model with $env:WEEDIT_OLLAMA_MODEL.
 function New-ReleaseNotes {
-    param([string]$Since)
+    param([string]$Since, [string]$Until = 'HEAD')
     $model = if ($env:WEEDIT_OLLAMA_MODEL) { $env:WEEDIT_OLLAMA_MODEL } else { 'llama3.2:latest' }
     try {
         if (-not (Get-Command ollama -ErrorAction SilentlyContinue)) {
             Write-Host "==> ollama not found; falling back to default release notes" -ForegroundColor Yellow
             return $null
         }
-        # Determine the commit range. With -Since, diff against that ref. Else
-        # use the previous release tag (build-*); if HEAD itself is already
-        # tagged (a re-release/resume), look from its parent so we don't diff
-        # against HEAD's own tag and get an empty range. First release (no such
-        # tag yet) -> summarize the last 30 commits instead.
+        # Determine the commit range base. With -Since, diff against that ref.
+        # Otherwise, when summarizing up to HEAD, auto-detect the previous
+        # release tag (build-*); if HEAD itself is already tagged (a re-release/
+        # resume), look from its parent so we don't diff against HEAD's own tag
+        # and get an empty range. First release (no such tag yet) -> last 30.
         if ($Since) {
             $base = $Since
-        } else {
+        } elseif ($Until -eq 'HEAD') {
             $describeRef = 'HEAD'
             if (@(& git tag --points-at HEAD --list 'build-*').Count -gt 0) { $describeRef = 'HEAD^' }
             $prev = (& git describe --tags --abbrev=0 --match 'build-*' $describeRef 2>$null)
             $base = if ($LASTEXITCODE -eq 0 -and $prev) { $prev.Trim() } else { $null }
+        } else {
+            $base = $null
         }
         if ($base) {
-            $log = (& git log --no-merges --pretty=format:'- %s' "$base..HEAD")
+            $log = (& git log --no-merges --pretty=format:'- %s' "$base..$Until")
         } else {
-            $log = (& git log --no-merges -n 30 --pretty=format:'- %s')
+            $log = (& git log --no-merges -n 30 --pretty=format:'- %s' $Until)
         }
         $baseLabel = if ($base) { $base } else { 'the last release' }
         if (-not $log) {
@@ -151,8 +164,8 @@ function New-ReleaseNotes {
             return $null
         }
         $commits = ($log -join "`n")
-        $rangeLabel = if ($base) { $base } else { 'HEAD~30' }
-        Write-Host "==> Summarizing $(@($log).Count) commit(s) since $rangeLabel" -ForegroundColor DarkGray
+        $rangeLabel = if ($base) { "$base..$Until" } else { "$Until~30..$Until" }
+        Write-Host "==> Summarizing $(@($log).Count) commit(s) ($rangeLabel)" -ForegroundColor DarkGray
         $prompt = @"
 You are writing concise, user-facing release notes for WeEdit, a desktop video editor for Twitch VODs.
 Summarize the following git commit subjects into short markdown release notes.
@@ -227,9 +240,26 @@ $Tasks = [ordered]@{
             }
             Invoke-Step (Get-PythonExe) (@('scripts/release.py','release') + $relArgs)
         } }
-    'release:notes'   = @{ Desc = 'Preview AI release notes (optional: a base tag/ref to diff from)'; Run = {
-            $since = if ($Rest -and $Rest.Count -ge 1) { $Rest[0] } else { $null }
-            $notes = New-ReleaseNotes -Since $since
+    'release:notes'   = @{ Desc = 'Preview AI notes. Args: <base-ref> | --past [N] for a past release'; Run = {
+            # Parse args: --past [N] regenerates notes for the Nth-from-latest
+            # published release (default 1 = the last one). A bare ref is used
+            # as the diff base for notes up to HEAD.
+            $past = $false; $n = 1; $since = $null
+            for ($i = 0; $i -lt @($Rest).Count; $i++) {
+                if ($Rest[$i] -match '^--?past$') {
+                    $past = $true
+                    if (($i + 1) -lt @($Rest).Count -and $Rest[$i + 1] -match '^\d+$') { $n = [int]$Rest[$i + 1]; $i++ }
+                } elseif (-not $since) { $since = $Rest[$i] }
+            }
+            if ($past) {
+                $until = Get-ReleaseTag -Index ($n - 1)   # the release to describe
+                $base = Get-ReleaseTag -Index $n          # the release before it
+                if (-not $until) { Write-Host "No release tag found $n back." -ForegroundColor Yellow; return }
+                Write-Host "==> Notes for past release $until" -ForegroundColor Cyan
+                $notes = New-ReleaseNotes -Since $base -Until $until
+            } else {
+                $notes = New-ReleaseNotes -Since $since
+            }
             if ($notes) { Write-Host "`n$notes`n" } else { Write-Host 'No notes generated.' -ForegroundColor Yellow }
         } }
 }

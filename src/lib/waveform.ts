@@ -4,6 +4,8 @@
 
 import { useEffect, useState } from "react";
 import { toPlayableUrl } from "@/lib/media";
+import { ffmpegAudioPeaks } from "@/lib/ffmpeg";
+import { isTauri } from "@/lib/platform";
 import type { MediaItem } from "@/types";
 
 export interface WaveformData {
@@ -65,7 +67,24 @@ function computePeaks(buffer: AudioBuffer): WaveformData {
   return { peaks, bucketsPerSec };
 }
 
-async function decode(media: MediaItem): Promise<WaveformData | null> {
+// Desktop: decode peaks natively via ffmpeg. Streams low-rate mono PCM, so it
+// handles any source length (multi-hour VODs included) without the OOM risk of
+// pulling the whole file into the webview.
+async function decodeNative(media: MediaItem): Promise<WaveformData | null> {
+  try {
+    const res = await ffmpegAudioPeaks(media.src, BUCKETS_PER_SEC, media.durationSec ?? 0);
+    if (!res.peaks.length) return null;
+    return { peaks: Float32Array.from(res.peaks), bucketsPerSec: res.bucketsPerSec };
+  } catch (err) {
+    console.warn(`Native waveform decode failed for ${media.name}:`, err);
+    return null;
+  }
+}
+
+// Web copy: no native ffmpeg, so decode in-browser via Web Audio. This pulls the
+// whole file into memory, so it's gated on a safe duration (see isWaveformSafe).
+async function decodeWeb(media: MediaItem): Promise<WaveformData | null> {
+  if (!isWaveformSafe(media)) return null;
   try {
     const res = await fetch(toPlayableUrl(media.src));
     const bytes = await res.arrayBuffer();
@@ -83,12 +102,13 @@ async function decode(media: MediaItem): Promise<WaveformData | null> {
   }
 }
 
+function decode(media: MediaItem): Promise<WaveformData | null> {
+  return isTauri() ? decodeNative(media) : decodeWeb(media);
+}
+
 function loadWaveform(media: MediaItem): Promise<WaveformData | null> {
   const cached = cache.get(media.id);
   if (cached) return Promise.resolve(cached);
-
-  // Bail before fetching anything for sources too large to decode safely.
-  if (!isWaveformSafe(media)) return Promise.resolve(null);
 
   let pending = inFlight.get(media.id);
   if (!pending) {

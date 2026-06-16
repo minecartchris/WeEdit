@@ -104,18 +104,13 @@ export function compileExport(input: ExportInputs, opts: ExportOptions): Compile
         ? `${inLabel}loop=loop=-1:size=1,trim=duration=${clip.durationSec.toFixed(3)}`
         : `${inLabel}trim=start=${clip.sourceInSec.toFixed(3)}:duration=${sourceSpan.toFixed(3)}`;
 
-    // Crop filter (applied before scale so the cropped region fills the canvas).
-    const c = clip.crop;
-    const cropFilter =
-      c && (c.left > 0 || c.right > 0 || c.top > 0 || c.bottom > 0)
-        ? `crop=iw*(1-${(c.left + c.right).toFixed(6)}):ih*(1-${(c.top + c.bottom).toFixed(6)}):iw*${c.left.toFixed(6)}:ih*${c.top.toFixed(6)},`
-        : "";
+    // Crop / position / scale / rotation, matching the preview's box model so the
+    // exported frame lines up with what the editor shows (split-screen overlays).
+    const tf = videoTransformFilters(clip, opts.width, opts.height);
 
     parts.push(
       `${head},setpts=(PTS-STARTPTS)/${speed.toFixed(6)},` +
-        cropFilter +
-        `scale=${opts.width}:${opts.height}:force_original_aspect_ratio=decrease,` +
-        `pad=${opts.width}:${opts.height}:(ow-iw)/2:(oh-ih)/2:color=black@0,` +
+        tf.chain +
         `setpts=PTS+${clip.startSec.toFixed(3)}/TB,` +
         `format=yuva420p,` +
         `colorchannelmixer=aa=${clip.opacity.toFixed(3)}` +
@@ -124,7 +119,7 @@ export function compileExport(input: ExportInputs, opts: ExportOptions): Compile
 
     const nextBg = `bg${vCounter}`;
     parts.push(
-      `[${bgLabel}][${prepared}]overlay=enable='between(t,${clip.startSec.toFixed(3)},${(clip.startSec + clip.durationSec).toFixed(3)})'[${nextBg}]`,
+      `[${bgLabel}][${prepared}]overlay=x=${tf.x}:y=${tf.y}:enable='between(t,${clip.startSec.toFixed(3)},${(clip.startSec + clip.durationSec).toFixed(3)})'[${nextBg}]`,
     );
     bgLabel = nextBg;
   }
@@ -321,6 +316,85 @@ function computeTotalDuration(clips: Record<string, Clip>): number {
     if (end > max) max = end;
   }
   return max;
+}
+
+function clampf(v: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, v));
+}
+
+/**
+ * Builds the per-clip video filter chain + overlay position so the export
+ * matches the preview's transform model:
+ *   - the source is object-contain fit into a W×H "box" (the full canvas),
+ *   - the box is cropped by the inset fractions (clip.crop),
+ *   - then scaled by clip.scale and centred at (clip.xPct, clip.yPct),
+ *   - then rotated by clip.rotation.
+ * Cropping a clip to one half and dropping two copies side-by-side therefore
+ * exports as a real split-screen, exactly as the editor renders it.
+ *
+ * Note: 3-D `tilt` (perspective rotateX) and keyframed transforms aren't carried
+ * into the export — only the clip's static transform is rendered.
+ */
+function videoTransformFilters(
+  clip: MediaClip,
+  W: number,
+  H: number,
+): { chain: string; x: number; y: number } {
+  const cr = clip.crop;
+  const l = cr ? clampf(cr.left, 0, 0.99) : 0;
+  const t = cr ? clampf(cr.top, 0, 0.99) : 0;
+  const r = cr ? clampf(cr.right, 0, 0.99 - l) : 0;
+  const b = cr ? clampf(cr.bottom, 0, 0.99 - t) : 0;
+  const s = clip.scale ?? 1;
+  const rot = clip.rotation ?? 0;
+  const xPct = clip.xPct ?? 50;
+  const yPct = clip.yPct ?? 50;
+
+  const cropped = l > 0 || r > 0 || t > 0 || b > 0;
+  const transformed = cropped || s !== 1 || rot !== 0 || xPct !== 50 || yPct !== 50;
+
+  // The fit-and-centre base, identical to the original (untransformed) output so
+  // plain clips export byte-for-byte as before.
+  const fitPad =
+    `scale=${W}:${H}:force_original_aspect_ratio=decrease,` +
+    `pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:color=black@0,`;
+
+  if (!transformed) {
+    return { chain: fitPad, x: 0, y: 0 };
+  }
+
+  // Box (the W×H stage) → crop inset → scale by s. Centre of the visible region
+  // tracks where the inset sits within the box (so cropping alone shifts it,
+  // matching the CSS clip-path preview).
+  const boxW = W * (1 - l - r) * s;
+  const boxH = H * (1 - t - b) * s;
+  const cx = (xPct / 100) * W + s * ((l - r) / 2) * W;
+  const cy = (yPct / 100) * H + s * ((t - b) / 2) * H;
+
+  let chain = fitPad;
+  if (cropped) {
+    chain +=
+      `crop=${(W * (1 - l - r)).toFixed(2)}:${(H * (1 - t - b)).toFixed(2)}:` +
+      `${(W * l).toFixed(2)}:${(H * t).toFixed(2)},`;
+  }
+  chain += `scale=${Math.max(2, Math.round(boxW))}:${Math.max(2, Math.round(boxH))},`;
+
+  let finalW = boxW;
+  let finalH = boxH;
+  if (rot !== 0) {
+    const rad = (rot * Math.PI) / 180;
+    const ow = Math.abs(boxW * Math.cos(rad)) + Math.abs(boxH * Math.sin(rad));
+    const oh = Math.abs(boxW * Math.sin(rad)) + Math.abs(boxH * Math.cos(rad));
+    chain += `rotate=${rad.toFixed(6)}:ow=${Math.ceil(ow)}:oh=${Math.ceil(oh)}:c=black@0,`;
+    finalW = ow;
+    finalH = oh;
+  }
+
+  return {
+    chain,
+    x: Math.round(cx - finalW / 2),
+    y: Math.round(cy - finalH / 2),
+  };
 }
 
 interface OrderedVideoClip {

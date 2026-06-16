@@ -372,15 +372,70 @@ function ClipBackground({
   if (clip.kind === "text") {
     return null;
   }
-  if (sourceMedia?.thumbnail) {
-    return (
-      <div
-        className="absolute inset-0 bg-cover bg-center bg-no-repeat opacity-90"
-        style={{ backgroundImage: `url(${sourceMedia.thumbnail})` }}
-      />
-    );
+  // Video / image: thumbnail background + audio waveform overlay for video clips.
+  return (
+    <>
+      {sourceMedia?.thumbnail && (
+        <div
+          className="absolute inset-0 bg-cover bg-center bg-no-repeat opacity-90"
+          style={{ backgroundImage: `url(${sourceMedia.thumbnail})` }}
+        />
+      )}
+      {clip.kind === "video" && (
+        <VideoWaveform clip={clip as MediaClip} sourceMedia={sourceMedia} width={width} />
+      )}
+    </>
+  );
+}
+
+/**
+ * Waveform overlay for video clips in the timeline. Renders at the bottom 40%
+ * of the clip block so the thumbnail above is still visible. White bars at
+ * reduced opacity keep the waveform readable on both dark and light thumbnails.
+ * Shows dimmed placeholder bars while the real waveform is being decoded.
+ */
+function VideoWaveform({
+  clip,
+  sourceMedia,
+  width,
+}: {
+  clip: MediaClip;
+  sourceMedia: MediaItem | undefined;
+  width: number;
+}) {
+  const waveform = useWaveform(sourceMedia);
+  const barCount = Math.max(8, Math.floor(width / 4));
+
+  const heights: number[] = [];
+  if (!waveform) {
+    heights.push(...placeholderHeights(barCount));
+  } else {
+    const speed = clip.speed ?? 1;
+    const startBucket = clip.sourceInSec * waveform.bucketsPerSec;
+    const bucketSpan = clip.durationSec * speed * waveform.bucketsPerSec;
+    for (let i = 0; i < barCount; i++) {
+      const from = Math.max(0, Math.floor(startBucket + (i / barCount) * bucketSpan));
+      const to = Math.min(
+        waveform.peaks.length,
+        Math.max(from + 1, Math.ceil(startBucket + ((i + 1) / barCount) * bucketSpan)),
+      );
+      let peak = 0;
+      for (let b = from; b < to; b++) if (waveform.peaks[b] > peak) peak = waveform.peaks[b];
+      heights.push(peak);
+    }
   }
-  return null;
+
+  return (
+    <div className="absolute bottom-0 left-0 right-0 h-2/5 flex items-end gap-px px-1 pb-0.5 pointer-events-none overflow-hidden">
+      {heights.map((h, i) => (
+        <div
+          key={i}
+          className={`flex-1 rounded-sm ${!waveform ? "bg-white/20" : "bg-white/45"}`}
+          style={{ height: `${Math.max(8, h * 100)}%` }}
+        />
+      ))}
+    </div>
+  );
 }
 
 function ClipLabel({

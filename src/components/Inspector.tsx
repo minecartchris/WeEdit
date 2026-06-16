@@ -61,8 +61,8 @@ function ClipInspector({ clip }: { clip: Clip }) {
       <KindBadge clip={clip} />
       {clip.kind === "text" ? <TextProps clip={clip} /> : <MediaProps clip={clip} />}
       {clip.kind !== "audio" && <TransformProps clip={clip} />}
-      {(clip.kind === "video" || clip.kind === "image") && <CropProps clip={clip} />}
       {clip.kind !== "audio" && <KeyframeProps clip={clip} />}
+      {(clip.kind === "video" || clip.kind === "image") && <CropProps clip={clip} />}
       {(clip.kind === "video" || clip.kind === "image") && <TransitionProps clip={clip} />}
     </div>
   );

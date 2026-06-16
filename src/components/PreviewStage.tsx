@@ -327,20 +327,6 @@ function TextLayer({ clip, playheadSec }: { clip: TextClip; playheadSec: number 
   );
 }
 
-// Converts a crop descriptor into CSS clip-path so only the un-cropped region
-// of the layer is visible. Fractions are clamped to prevent inversion.
-function cropStyle(
-  crop: { left: number; right: number; top: number; bottom: number } | undefined,
-): React.CSSProperties {
-  if (!crop) return {};
-  const l = Math.max(0, Math.min(crop.left, 0.99));
-  const r = Math.max(0, Math.min(crop.right, 0.99 - l));
-  const t = Math.max(0, Math.min(crop.top, 0.99));
-  const b = Math.max(0, Math.min(crop.bottom, 0.99 - t));
-  if (l === 0 && r === 0 && t === 0 && b === 0) return {};
-  return { clipPath: `inset(${t * 100}% ${r * 100}% ${b * 100}% ${l * 100}%)` };
-}
-
 // Absolute, stage-sized box centered on (xPct,yPct), scaled, rotated and tilted.
 // Media fills it with object-contain, so the default 50/50/scale-1/0°/0° overlays
 // the whole stage exactly as before; changing the transform moves/zooms/rotates.
@@ -420,6 +406,20 @@ function AudioLayer({
       crossOrigin="anonymous"
     />
   );
+}
+
+// Converts a crop descriptor into CSS clip-path so only the un-cropped region
+// of the layer is visible. Fractions are clamped to prevent inversion.
+function cropStyle(
+  crop: { left: number; right: number; top: number; bottom: number } | undefined,
+): React.CSSProperties {
+  if (!crop) return {};
+  const l = Math.max(0, Math.min(crop.left, 0.99));
+  const r = Math.max(0, Math.min(crop.right, 0.99 - l));
+  const t = Math.max(0, Math.min(crop.top, 0.99));
+  const b = Math.max(0, Math.min(crop.bottom, 0.99 - t));
+  if (l === 0 && r === 0 && t === 0 && b === 0) return {};
+  return { clipPath: `inset(${t * 100}% ${r * 100}% ${b * 100}% ${l * 100}%)` };
 }
 
 // ── On-stage move / resize ───────────────────────────────────────────────────

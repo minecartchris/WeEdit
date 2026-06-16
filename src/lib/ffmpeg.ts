@@ -85,6 +85,31 @@ export async function extractAudioTracks(args: {
   });
 }
 
+export interface AudioPeaks {
+  /** Peak amplitude (0..1) per time bucket. */
+  peaks: number[];
+  /** Buckets per second of source audio. */
+  bucketsPerSec: number;
+}
+
+/**
+ * Decodes the source's audio natively (ffmpeg) into per-bucket peak amplitudes
+ * for the timeline waveform. Handles arbitrarily long sources (multi-hour VODs)
+ * without loading the file into the webview. Throws if ffmpeg is unavailable.
+ */
+export async function ffmpegAudioPeaks(
+  sourcePath: string,
+  bucketsPerSec: number,
+  durationSec: number,
+): Promise<AudioPeaks> {
+  return invoke<AudioPeaks>("ffmpeg_audio_peaks", {
+    sourcePath,
+    bucketsPerSec,
+    durationSec,
+    customPath: customPath(),
+  });
+}
+
 // ── Export ──
 
 export interface FfmpegExportProgress {

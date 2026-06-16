@@ -583,6 +583,91 @@ fn ffmpeg_extract_audio_tracks_blocking(
     Ok(results)
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AudioPeaks {
+    /// Peak amplitude (0..1) per time bucket.
+    peaks: Vec<f32>,
+    /// Buckets per second of source audio (the timeline waveform resolution).
+    buckets_per_sec: f32,
+}
+
+/// Decodes `source_path`'s audio to low-rate mono PCM via ffmpeg and reduces it
+/// to per-bucket peak amplitudes for timeline waveform rendering. Unlike the
+/// browser Web Audio path this never loads the whole file into the webview, so
+/// it works on multi-hour VODs without exhausting memory. The decode sample
+/// rate is chosen from the duration so the total PCM stays bounded (~2M samples)
+/// regardless of source length.
+#[tauri::command]
+async fn ffmpeg_audio_peaks(
+    source_path: String,
+    buckets_per_sec: u32,
+    duration_sec: f64,
+    custom_path: Option<String>,
+) -> Result<AudioPeaks, String> {
+    run_blocking("ffmpeg_audio_peaks", move || {
+        ffmpeg_audio_peaks_blocking(source_path, buckets_per_sec, duration_sec, custom_path)
+    })
+    .await
+}
+
+fn ffmpeg_audio_peaks_blocking(
+    source_path: String,
+    buckets_per_sec: u32,
+    duration_sec: f64,
+    custom_path: Option<String>,
+) -> Result<AudioPeaks, String> {
+    let bin = find_ffmpeg_binary("ffmpeg", custom_path.as_deref())
+        .ok_or_else(|| FFMPEG_INSTALL_HINT.to_string())?;
+
+    let bps = buckets_per_sec.max(1);
+    // samples-per-bucket `k`: pick so total samples ≈ 2M, clamped to a sane band,
+    // and keep the decode rate an exact multiple of bps so buckets stay aligned
+    // to 1/bps-second windows.
+    let k: u32 = if duration_sec.is_finite() && duration_sec > 0.0 {
+        let target = 2_000_000.0 / (bps as f64 * duration_sec);
+        (target.round() as i64).clamp(4, (8000 / bps).max(4) as i64) as u32
+    } else {
+        20
+    };
+    let ar = bps * k;
+
+    let output = command(&bin)
+        .args([
+            "-v", "error",
+            "-i", &source_path,
+            "-vn",
+            "-ac", "1",
+            "-ar", &ar.to_string(),
+            "-f", "f32le",
+            "-",
+        ])
+        .output()
+        .map_err(|e| format!("Failed to run ffmpeg: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("ffmpeg audio decode failed: {}", stderr.trim()));
+    }
+
+    let samples_per_bucket = k as usize;
+    let total_samples = output.stdout.len() / 4;
+    let bucket_count = total_samples.div_ceil(samples_per_bucket).max(1);
+    let mut peaks = vec![0f32; bucket_count];
+    for (i, chunk) in output.stdout.chunks_exact(4).enumerate() {
+        let v = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]).abs();
+        let bucket = i / samples_per_bucket;
+        if v > peaks[bucket] {
+            peaks[bucket] = v;
+        }
+    }
+
+    Ok(AudioPeaks {
+        peaks,
+        buckets_per_sec: bps as f32,
+    })
+}
+
 // ── ffmpeg export (timeline → mp4 via filter_complex) ──
 
 #[derive(serde::Serialize, Clone)]
@@ -1292,6 +1377,7 @@ pub fn run() {
             http_download,
             ffprobe_audio_streams,
             ffmpeg_extract_audio_tracks,
+            ffmpeg_audio_peaks,
             ffmpeg_check,
             ffmpeg_run,
             ffmpeg_cancel,

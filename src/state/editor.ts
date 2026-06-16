@@ -9,6 +9,7 @@ import {
 } from "@/lib/clips";
 import type {
   AspectRatio,
+  AudioTrackInfo,
   Clip,
   Keyframe,
   LibraryFilter,
@@ -212,6 +213,15 @@ function nextZIndex(existing: Track[], kind: TrackKind): number {
   const base = kind === "text" ? 30 : kind === "video" ? 20 : 10;
   const peer = existing.filter((t) => t.kind === kind).map((t) => t.zIndex);
   return peer.length ? Math.max(...peer) + 1 : base;
+}
+
+// Human label for one extracted audio stream, used when detach splits a
+// multi-audio video into per-stream tracks (e.g. "Track 2 mic (eng)").
+function audioStreamLabel(t: AudioTrackInfo): string {
+  const parts: string[] = [`Track ${t.index + 1}`];
+  if (t.title) parts.push(t.title);
+  if (t.language) parts.push(`(${t.language})`);
+  return parts.join(" ");
 }
 
 export const useEditor = create<EditorState>((set, get) => ({
@@ -567,18 +577,18 @@ export const useEditor = create<EditorState>((set, get) => ({
     set((s) => {
       const clip = s.clips[clipId];
       if (!clip || clip.kind !== "video") return s;
-      // Put the detached audio on its own new audio track so it can never
-      // collide with existing audio clips, and the user can move it freely.
-      const trackId = `track-audio-${crypto.randomUUID().slice(0, 8)}`;
-      const audioClipId = crypto.randomUUID();
-      const audioClip: Clip = {
-        id: audioClipId,
-        trackId,
+
+      const videoMedia = s.media.find((m) => m.id === clip.mediaId) ?? null;
+      // The per-stream extracted files for a multi-audio source (game, mic, …).
+      const streams = (videoMedia?.audioTracks ?? []).filter((t) => t.filepath);
+
+      // Shared fields for every detached audio clip — same timeline placement and
+      // source trim as the video, full-volume, centered (audio has no transform).
+      const baseClip = {
         startSec: clip.startSec,
         durationSec: clip.durationSec,
         sourceInSec: clip.sourceInSec,
-        kind: "audio",
-        mediaId: clip.mediaId,
+        kind: "audio" as const,
         opacity: 1,
         volume: clip.volume > 0 ? clip.volume : 1,
         xPct: 50,
@@ -587,21 +597,70 @@ export const useEditor = create<EditorState>((set, get) => ({
         rotation: 0,
         tilt: 0,
       };
-      const newTrack: Track = {
-        id: trackId,
+
+      const makeAudioTrack = (existing: Track[], clipIds: string[]): Track => ({
+        id: clipIds[0] ? `track-audio-${clipIds[0].slice(0, 8)}` : `track-audio-${crypto.randomUUID().slice(0, 8)}`,
         kind: "audio",
-        name: nextTrackName(s.tracks, "audio"),
+        name: nextTrackName(existing, "audio"),
         volume: 1,
         muted: false,
-        zIndex: nextZIndex(s.tracks, "audio"),
-        clipIds: [audioClipId],
-      };
+        zIndex: nextZIndex(existing, "audio"),
+        clipIds,
+      });
+
+      // Multi-stream source → split into one audio track per stream, each playing
+      // its own extracted file, so the user can move/mute/level them independently
+      // (e.g. game audio on one track, mic on another).
+      if (streams.length > 1) {
+        let tracks = [...s.tracks];
+        let media = [...s.media];
+        const clipsPatch: Record<string, Clip> = {};
+        const selected: string[] = [];
+
+        for (const st of streams) {
+          // Reuse an audio MediaItem for this extracted stream if one already
+          // exists (e.g. the same clip was detached before); else create one.
+          let am = media.find((m) => m.kind === "audio" && m.src === st.filepath) ?? null;
+          if (!am) {
+            am = {
+              id: crypto.randomUUID(),
+              name: `${videoMedia!.name} · ${audioStreamLabel(st)}`,
+              kind: "audio",
+              src: st.filepath,
+              durationSec: videoMedia!.durationSec,
+              importedAt: Date.now(),
+            };
+            media = [...media, am];
+          }
+          const audioClipId = crypto.randomUUID();
+          const track = makeAudioTrack(tracks, [audioClipId]);
+          clipsPatch[audioClipId] = { ...baseClip, id: audioClipId, trackId: track.id, mediaId: am.id } as Clip;
+          tracks = [...tracks, track];
+          selected.push(audioClipId);
+        }
+
+        return withHistory(s, {
+          tracks,
+          media,
+          clips: {
+            ...s.clips,
+            ...clipsPatch,
+            // Silence the source video — its sound now lives on the new tracks.
+            [clipId]: { ...clip, volume: 0 } as Clip,
+          },
+          selectedClipIds: selected,
+        });
+      }
+
+      // Single-stream (or unknown) → one detached audio clip from the muxed source.
+      const audioClipId = crypto.randomUUID();
+      const newTrack = makeAudioTrack(s.tracks, [audioClipId]);
+      const audioClip = { ...baseClip, id: audioClipId, trackId: newTrack.id, mediaId: clip.mediaId } as Clip;
       return withHistory(s, {
         tracks: [...s.tracks, newTrack],
         clips: {
           ...s.clips,
           [audioClipId]: audioClip,
-          // Mute the source video's audio — its sound now lives on the new track.
           [clipId]: { ...clip, volume: 0 } as Clip,
         },
         selectedClipIds: [audioClipId],

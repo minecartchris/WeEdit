@@ -668,6 +668,36 @@ fn ffmpeg_audio_peaks_blocking(
     })
 }
 
+/// Returns the bitrate (bits/sec) of the first audio stream in `path`, read from
+/// the container header (instant — no decode). Used to spot effectively-silent
+/// streams: a near-zero-bitrate AAC track (~2-3 kbps) carries no real audio, so
+/// detach can skip those empty tracks. Returns None if ffprobe can't report it.
+#[tauri::command]
+async fn ffprobe_audio_bitrate(
+    path: String,
+    custom_path: Option<String>,
+) -> Result<Option<u64>, String> {
+    run_blocking("ffprobe_audio_bitrate", move || {
+        let bin = find_ffmpeg_binary("ffprobe", custom_path.as_deref())
+            .ok_or_else(|| FFMPEG_INSTALL_HINT.to_string())?;
+        let output = command(&bin)
+            .args([
+                "-v", "error",
+                "-select_streams", "a:0",
+                "-show_entries", "stream=bit_rate",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                &path,
+            ])
+            .output()
+            .map_err(|e| format!("Failed to run ffprobe: {e}"))?;
+        if !output.status.success() {
+            return Ok(None);
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).trim().parse::<u64>().ok())
+    })
+    .await
+}
+
 // ── ffmpeg export (timeline → mp4 via filter_complex) ──
 
 #[derive(serde::Serialize, Clone)]
@@ -1378,6 +1408,7 @@ pub fn run() {
             ffprobe_audio_streams,
             ffmpeg_extract_audio_tracks,
             ffmpeg_audio_peaks,
+            ffprobe_audio_bitrate,
             ffmpeg_check,
             ffmpeg_run,
             ffmpeg_cancel,

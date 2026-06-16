@@ -85,6 +85,22 @@ export async function extractAudioTracks(args: {
   });
 }
 
+/**
+ * First audio stream's bitrate (bits/sec) from the container header, or null if
+ * unavailable. A near-zero bitrate (~2-3 kbps AAC) means the stream is silent.
+ */
+export async function ffprobeAudioBitrate(path: string): Promise<number | null> {
+  try {
+    const r = await invoke<number | null>("ffprobe_audio_bitrate", {
+      path,
+      customPath: customPath(),
+    });
+    return r ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export interface AudioPeaks {
   /** Peak amplitude (0..1) per time bucket. */
   peaks: number[];

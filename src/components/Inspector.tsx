@@ -1,5 +1,7 @@
 import { AudioLines, Diamond, MousePointerSquareDashed, SlidersHorizontal, Volume2, VolumeX, X } from "lucide-react";
+import { useState } from "react";
 import { NumberField } from "@/components/ui/NumberField";
+import { ffprobeAudioBitrate } from "@/lib/ffmpeg";
 import {
   KEYFRAME_EPSILON,
   MAX_SCALE,
@@ -324,6 +326,33 @@ function MediaProps({ clip }: { clip: MediaClip }) {
     updateClip(clip.id, { mutedTracks: next });
   };
 
+  // Detach audio. For a multi-stream source, probe each extracted track's
+  // bitrate first and only detach the ones that actually carry audio — silent
+  // streams (e.g. an unused OBS mic track ≈ 2 kbps) would otherwise become blank,
+  // soundless tracks on the timeline.
+  const [detaching, setDetaching] = useState(false);
+  const onDetach = async () => {
+    const tracks = media?.audioTracks ?? [];
+    let audible: number[] | undefined;
+    if (tracks.length > 1) {
+      setDetaching(true);
+      try {
+        const SILENT_BPS = 16000;
+        const flags = await Promise.all(
+          tracks.map(async (t) => {
+            if (!t.filepath) return false;
+            const br = await ffprobeAudioBitrate(t.filepath);
+            return br == null || br >= SILENT_BPS; // unknown → keep, don't drop a real track
+          }),
+        );
+        audible = tracks.filter((_, i) => flags[i]).map((t) => t.index);
+      } finally {
+        setDetaching(false);
+      }
+    }
+    detachAudio(clip.id, audible);
+  };
+
   return (
     <section className="flex flex-col gap-3">
       <SectionTitle>Clip</SectionTitle>
@@ -403,12 +432,13 @@ function MediaProps({ clip }: { clip: MediaClip }) {
       )}
       {clip.kind === "video" && (
         <button
-          onClick={() => detachAudio(clip.id)}
-          className="we-btn justify-center border border-we-border mt-1"
-          title="Split this clip's audio onto its own audio track"
+          onClick={() => void onDetach()}
+          disabled={detaching}
+          className="we-btn justify-center border border-we-border mt-1 disabled:opacity-50"
+          title="Split this clip's audio onto its own audio track (one per non-silent source stream)"
         >
           <AudioLines className="w-4 h-4 text-we-teal" />
-          Detach audio
+          {detaching ? "Detaching…" : "Detach audio"}
         </button>
       )}
     </section>

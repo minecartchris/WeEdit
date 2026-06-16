@@ -134,7 +134,7 @@ interface EditorState {
   copySelectedClips: () => void;
   pasteClips: () => void;
   /** Split a video clip's audio onto a new audio track and mute the video. */
-  detachAudio: (clipId: string) => void;
+  detachAudio: (clipId: string, audibleIndices?: number[]) => void;
   /** Set a media clip's playback speed (rescales its timeline duration to keep
    *  the same source span, clamped so it doesn't overlap the next clip). */
   setClipSpeed: (clipId: string, speed: number) => void;
@@ -573,14 +573,20 @@ export const useEditor = create<EditorState>((set, get) => ({
       });
     }),
 
-  detachAudio: (clipId) =>
+  detachAudio: (clipId, audibleIndices) =>
     set((s) => {
       const clip = s.clips[clipId];
       if (!clip || clip.kind !== "video") return s;
 
       const videoMedia = s.media.find((m) => m.id === clip.mediaId) ?? null;
-      // The per-stream extracted files for a multi-audio source (game, mic, …).
-      const streams = (videoMedia?.audioTracks ?? []).filter((t) => t.filepath);
+      const allStreams = (videoMedia?.audioTracks ?? []).filter((t) => t.filepath);
+      // Drop silent streams (e.g. an OBS mic track that never got input) when the
+      // caller has probed which ones actually carry audio. If we couldn't tell
+      // (no list, or none qualified), keep them all rather than detaching nothing.
+      const audible = audibleIndices
+        ? allStreams.filter((t) => audibleIndices.includes(t.index))
+        : allStreams;
+      const streams = audible.length > 0 ? audible : allStreams;
 
       // Shared fields for every detached audio clip — same timeline placement and
       // source trim as the video, full-volume, centered (audio has no transform).

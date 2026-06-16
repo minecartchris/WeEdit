@@ -104,8 +104,16 @@ export function compileExport(input: ExportInputs, opts: ExportOptions): Compile
         ? `${inLabel}loop=loop=-1:size=1,trim=duration=${clip.durationSec.toFixed(3)}`
         : `${inLabel}trim=start=${clip.sourceInSec.toFixed(3)}:duration=${sourceSpan.toFixed(3)}`;
 
+    // Crop filter (applied before scale so the cropped region fills the canvas).
+    const c = clip.crop;
+    const cropFilter =
+      c && (c.left > 0 || c.right > 0 || c.top > 0 || c.bottom > 0)
+        ? `crop=iw*(1-${(c.left + c.right).toFixed(6)}):ih*(1-${(c.top + c.bottom).toFixed(6)}):iw*${c.left.toFixed(6)}:ih*${c.top.toFixed(6)},`
+        : "";
+
     parts.push(
       `${head},setpts=(PTS-STARTPTS)/${speed.toFixed(6)},` +
+        cropFilter +
         `scale=${opts.width}:${opts.height}:force_original_aspect_ratio=decrease,` +
         `pad=${opts.width}:${opts.height}:(ow-iw)/2:(oh-ih)/2:color=black@0,` +
         `setpts=PTS+${clip.startSec.toFixed(3)}/TB,` +

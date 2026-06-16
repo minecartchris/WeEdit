@@ -61,9 +61,45 @@ function ClipInspector({ clip }: { clip: Clip }) {
       <KindBadge clip={clip} />
       {clip.kind === "text" ? <TextProps clip={clip} /> : <MediaProps clip={clip} />}
       {clip.kind !== "audio" && <TransformProps clip={clip} />}
+      {(clip.kind === "video" || clip.kind === "image") && <CropProps clip={clip} />}
       {clip.kind !== "audio" && <KeyframeProps clip={clip} />}
       {(clip.kind === "video" || clip.kind === "image") && <TransitionProps clip={clip} />}
     </div>
+  );
+}
+
+function CropProps({ clip }: { clip: MediaClip }) {
+  const updateClip = useEditor((s) => s.updateClip);
+  const pushHistory = useEditor((s) => s.pushHistory);
+  const crop = clip.crop ?? { left: 0, right: 0, top: 0, bottom: 0 };
+
+  const set = (side: "left" | "right" | "top" | "bottom", pct: number) => {
+    updateClip(clip.id, { crop: { ...crop, [side]: pct / 100 } });
+  };
+
+  const isCropped = crop.left > 0 || crop.right > 0 || crop.top > 0 || crop.bottom > 0;
+
+  return (
+    <section className="flex flex-col gap-3 border-t border-we-border pt-4">
+      <div className="flex items-center justify-between">
+        <SectionTitle>Crop</SectionTitle>
+        {isCropped && (
+          <button
+            onClick={() => { pushHistory(); updateClip(clip.id, { crop: undefined }); }}
+            className="text-[10px] text-we-muted hover:text-we-ink underline"
+          >
+            Reset
+          </button>
+        )}
+      </div>
+      <p className="text-[10px] text-we-muted leading-4 -mt-1">
+        Trim edges (0–99%). Overlay two cropped clips for split-screen.
+      </p>
+      <NumberField label="Left"   value={Math.round(crop.left   * 100)} min={0} max={99} suffix="%" resetTo={0} onCommitStart={pushHistory} onChange={(v) => set("left",   v)} />
+      <NumberField label="Right"  value={Math.round(crop.right  * 100)} min={0} max={99} suffix="%" resetTo={0} onCommitStart={pushHistory} onChange={(v) => set("right",  v)} />
+      <NumberField label="Top"    value={Math.round(crop.top    * 100)} min={0} max={99} suffix="%" resetTo={0} onCommitStart={pushHistory} onChange={(v) => set("top",    v)} />
+      <NumberField label="Bottom" value={Math.round(crop.bottom * 100)} min={0} max={99} suffix="%" resetTo={0} onCommitStart={pushHistory} onChange={(v) => set("bottom", v)} />
+    </section>
   );
 }
 

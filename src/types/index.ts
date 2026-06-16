@@ -153,6 +153,12 @@ export interface MediaClip extends ClipBase, Transform {
    * copy/paste) can mute different streams independently.
    */
   mutedTracks?: number[];
+  /**
+   * Crop insets as fractions of the source frame (0..1 each). Undefined = no
+   * crop. Applied before positioning/scale so cropping a video to its left half
+   * and placing two copies side-by-side produces a split-screen effect.
+   */
+  crop?: { left: number; right: number; top: number; bottom: number };
 }
 
 export interface TextClip extends ClipBase, Transform {

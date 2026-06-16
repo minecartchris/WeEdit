@@ -521,11 +521,12 @@ function TrackHeader({ track }: { track: Track }) {
           <input
             type="range"
             min={0}
-            max={1}
+            max={2}
             step={0.01}
             value={track.volume}
             onChange={(e) => setVolume(track.id, parseFloat(e.target.value))}
             className="accent-we-teal flex-1 min-w-0"
+            title={`${Math.round(track.volume * 100)}%`}
             aria-label={`${track.name} volume`}
           />
         </div>

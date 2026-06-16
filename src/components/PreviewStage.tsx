@@ -1,4 +1,5 @@
 import { toPlayableUrl } from "@/lib/media";
+import { MAX_VOLUME, applyLoudness } from "@/lib/audioGain";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { MAX_SCALE, MIN_SCALE, previousClipOnTrack, resolveTransform, type ResolvedTransform } from "@/lib/clips";
 import { useEditor } from "@/state/editor";
@@ -162,17 +163,11 @@ function VideoLayer({
 
   // Volume + opacity. When the user has muted a specific stream we hand audio
   // off to the extracted <audio> siblings and silence the muxed track; otherwise
-  // the <video> carries the sound itself.
+  // the <video> carries the sound itself (boost-aware via applyLoudness).
   useEffect(() => {
     const v = ref.current;
     if (!v) return;
-    if (useExtractedAudio) {
-      v.muted = true;
-      v.volume = 0;
-    } else {
-      v.volume = volume;
-      v.muted = volume <= 0;
-    }
+    applyLoudness(v, useExtractedAudio ? 0 : volume);
   }, [volume, useExtractedAudio]);
 
   return (
@@ -262,8 +257,7 @@ function ExtractedAudioTrack({
   useEffect(() => {
     const a = ref.current;
     if (!a) return;
-    a.volume = effectiveVolume;
-    a.muted = effectiveVolume <= 0;
+    applyLoudness(a, effectiveVolume);
   }, [effectiveVolume]);
 
   if (!track.filepath) return null;
@@ -401,8 +395,7 @@ function AudioLayer({
   useEffect(() => {
     const a = ref.current;
     if (!a) return;
-    a.volume = volume;
-    a.muted = volume <= 0;
+    applyLoudness(a, volume);
   }, [volume]);
 
   return (
@@ -588,8 +581,10 @@ function EmptyStage() {
   );
 }
 
-function clamp01(v: number) {
-  return Math.max(0, Math.min(1, v));
+// Volume clamp allows boost above unity (up to MAX_VOLUME); the gain node in
+// applyLoudness carries anything over 1.0 since element.volume can't exceed it.
+function clampVol(v: number) {
+  return Math.max(0, Math.min(MAX_VOLUME, v));
 }
 
 interface VisualEntry {
@@ -629,7 +624,7 @@ function collectActiveVisuals(
     if (!active) continue;
     const mActive = media.find((m) => m.id === active!.mediaId);
     if (!mActive) continue;
-    const vol = (c: MediaClip) => (track.muted ? 0 : clamp01(c.volume * track.volume));
+    const vol = (c: MediaClip) => (track.muted ? 0 : clampVol(c.volume * track.volume));
 
     const tr = active.transition;
     const local = playheadSec - active.startSec;
@@ -696,7 +691,7 @@ function collectActiveAudios(
           trackId: track.id,
           clip: c as MediaClip,
           media: m,
-          volume: clamp01((c as MediaClip).volume * track.volume),
+          volume: clampVol((c as MediaClip).volume * track.volume),
         });
       }
     }

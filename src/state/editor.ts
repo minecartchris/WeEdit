@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { MAX_VOLUME } from "@/lib/audioGain";
 import {
   KEYFRAME_EPSILON,
   MIN_CLIP_DURATION,
@@ -344,7 +345,9 @@ export const useEditor = create<EditorState>((set, get) => ({
   setTrackVolume: (id, volume) =>
     set((s) => ({
       tracks: s.tracks.map((t) =>
-        t.id === id ? { ...t, volume: Math.max(0, Math.min(1, volume)) } : t,
+        // Allow boost above unity (up to MAX_VOLUME); preview applies the extra
+        // gain via a Web Audio node since element.volume is capped at 1.0.
+        t.id === id ? { ...t, volume: Math.max(0, Math.min(MAX_VOLUME, volume)) } : t,
       ),
     })),
   setTrackMuted: (id, muted) =>

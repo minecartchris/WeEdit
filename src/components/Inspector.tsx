@@ -304,16 +304,23 @@ function MediaProps({ clip }: { clip: MediaClip }) {
         />
       )}
       {clip.kind !== "image" && (
-        <NumberField
-          label="Volume"
-          value={Math.round(clip.volume * 100)}
-          min={0}
-          max={100}
-          suffix="%"
-          resetTo={100}
-          onCommitStart={pushHistory}
-          onChange={(v) => updateClip(clip.id, { volume: v / 100 })}
-        />
+        <>
+          <NumberField
+            label="Volume"
+            value={Math.round(clip.volume * 100)}
+            min={0}
+            max={200}
+            suffix="%"
+            resetTo={100}
+            onCommitStart={pushHistory}
+            onChange={(v) => updateClip(clip.id, { volume: v / 100 })}
+          />
+          {clip.volume > 1 && (
+            <div className="text-[10px] text-we-muted leading-4 -mt-1">
+              Above 100% boosts this clip louder than its source.
+            </div>
+          )}
+        </>
       )}
       {clip.kind !== "image" && (
         <>

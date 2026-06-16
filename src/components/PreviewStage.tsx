@@ -634,20 +634,24 @@ function collectActiveVisuals(
       if (prev && mPrev) {
         const p = local / tr.durationSec; // incoming progress 0..1
         // Outgoing (behind): the previous clip's source keeps playing past its
-        // cut into the lead-in window, fading out.
+        // cut into the lead-in window, fading out *visually*. Its audio is
+        // silenced — playing both clips' audio at once during the transition
+        // read as a doubled/echoing track, so only the incoming clip is heard.
         out.push({
           key: `${track.id}-out`,
           clip: prev as MediaClip,
           media: mPrev,
-          volume: vol(prev as MediaClip) * (1 - p),
+          volume: 0,
           extraOpacity: 1 - p,
         });
         // Incoming (front): crossfade ramps opacity; wipe reveals left→right.
+        // Audio plays at its normal level (no fade-in) so there's exactly one
+        // audible source through the transition.
         out.push({
           key: `${track.id}:${active.mediaId}`,
           clip: active,
           media: mActive,
-          volume: vol(active) * p,
+          volume: vol(active),
           extraOpacity: tr.type === "crossfade" ? p : 1,
           clipStyle: tr.type === "wipe" ? { clipPath: `inset(0 ${(1 - p) * 100}% 0 0)` } : undefined,
         });

@@ -169,7 +169,7 @@ export function Timeline() {
   }, []);
 
   return (
-    <section className="flex-1 w-full flex flex-col min-h-0 h-full bg-we-panel border-t border-we-border min-w-0">
+    <section className="flex-1 w-full flex flex-col min-h-0 h-full bg-we-panel border-t border-we-border min-w-0 select-none">
       <TimelineToolbar
         timecode={`${totalDisplay} / ${totalLength}`}
         pxPerSec={pxPerSec}

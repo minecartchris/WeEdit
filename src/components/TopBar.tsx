@@ -1,4 +1,5 @@
 import { isTauri } from "@/lib/platform";
+import { WEBSITE_URL, openExternal } from "@/lib/links";
 import {
   Bell,
   FileDown,
@@ -106,9 +107,15 @@ export function TopBar() {
   return (
     <header className="h-14 shrink-0 flex items-center gap-3 px-3 bg-we-panel border-b border-we-border">
       <div className="flex items-center gap-2 pr-2">
-        <div className="w-8 h-8 rounded-md bg-we-teal text-white grid place-items-center font-semibold text-sm tracking-tight">
+        <button
+          type="button"
+          onClick={() => void openExternal(WEBSITE_URL).catch((err) => console.error(err))}
+          className="w-8 h-8 rounded-md bg-we-teal text-white grid place-items-center font-semibold text-sm tracking-tight transition-opacity hover:opacity-85 focus:outline-none focus-visible:ring-2 focus-visible:ring-we-teal/60"
+          title="Open the WeEdit website"
+          aria-label="Open the WeEdit website"
+        >
           we
-        </div>
+        </button>
       </div>
 
       <Menu

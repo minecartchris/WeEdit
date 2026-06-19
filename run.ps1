@@ -16,6 +16,8 @@
 #   ./run.ps1 build           # type-check + production web build
 #   ./run.ps1 build:app       # full desktop installer build
 #   ./run.ps1 check           # type-check frontend (tsc) + backend (cargo)
+#   ./run.ps1 clean           # remove build artifacts (dist, installers, Linux)
+#   ./run.ps1 clean -Deep     # ...and cargo clean the Rust target too
 #   ./run.ps1 release         # publish Windows + Linux (.deb/.AppImage via WSL)
 #   ./run.ps1 release -DryRun # build both without publishing
 #   ./run.ps1 release -Push   # push HEAD to origin, then publish
@@ -64,6 +66,37 @@ function Invoke-Step {
     Write-Host "==> $shown" -ForegroundColor Cyan
     & $Exe @CmdArgs
     if ($LASTEXITCODE -ne 0) { throw "Command failed ($LASTEXITCODE): $shown" }
+}
+
+# Remove regenerable build artifacts. All of these are gitignored output that a
+# build recreates, so deleting them is safe. -IncludeRust also runs `cargo clean`
+# (forces a full Rust recompile next build). Returns the count of paths removed.
+# $PSScriptRoot is the repo root (run.ps1 lives there).
+function Clear-BuildArtifacts {
+    param([switch]$IncludeRust)
+    $removed = 0
+    $paths = @(
+        'dist', 'dist-web', 'dist-ssr', 'dist-linux',          # web + Linux build output
+        'src-tauri/target/release/bundle/msi',                  # Windows installers
+        'src-tauri/target/release/bundle/nsis',
+        'src-tauri/target/release/bundle/latest.json',          # updater manifest
+        'tsconfig.tsbuildinfo', 'tsconfig.node.tsbuildinfo'     # tsc -b incremental cache
+    )
+    foreach ($rel in $paths) {
+        $full = Join-Path $PSScriptRoot $rel
+        if (Test-Path -LiteralPath $full) {
+            Remove-Item -LiteralPath $full -Recurse -Force -ErrorAction SilentlyContinue
+            if (-not (Test-Path -LiteralPath $full)) {
+                Write-Host "   removed $rel" -ForegroundColor DarkGray
+                $removed++
+            }
+        }
+    }
+    if ($IncludeRust) {
+        Write-Host "==> cargo clean (next Rust build is a full recompile)" -ForegroundColor Cyan
+        Invoke-Step cargo @('clean', '--manifest-path', 'src-tauri/Cargo.toml')
+    }
+    return $removed
 }
 
 # Load the Tauri updater signing key into the environment for release builds.
@@ -344,11 +377,24 @@ $Tasks = [ordered]@{
         } }
     'fetch-binaries'  = @{ Desc = 'Download bundled ffmpeg binaries';             Run = { Invoke-Step npm (@('run','fetch-binaries') + $Rest) } }
     'clean-installers'= @{ Desc = 'Remove stale installer artifacts';            Run = { Invoke-Step npm (@('run','clean-installers') + $Rest) } }
+    'clean'           = @{ Desc = 'Remove build artifacts (dist, installers, Linux bundles, tsbuildinfo). -Deep also cargo-cleans'; Run = {
+            $deep = [bool](@($Rest) -match '^--?deep$')
+            Write-Host "==> Cleaning build artifacts..." -ForegroundColor Cyan
+            $n = Clear-BuildArtifacts -IncludeRust:$deep
+            Write-Host "==> Done. Removed $n artifact path(s)." -ForegroundColor Green
+        } }
     'release'         = @{ Desc = 'Build, sign & publish a release: Windows + Linux (.deb/.AppImage via WSL)'; Run = {
             $relArgs = ConvertTo-ReleaseArgs $Rest
             if (-not (Test-HasNotesArg $Rest)) {
                 $notes = New-ReleaseNotes
                 if ($notes) { $relArgs += @('--notes', $notes) }
+            }
+            # Clear stale Linux artifacts so old versions aren't re-uploaded
+            # (Windows installers are pruned by clean-installers in the build).
+            $distLinux = Join-Path $PSScriptRoot 'dist-linux'
+            if (Test-Path -LiteralPath $distLinux) {
+                Remove-Item -LiteralPath $distLinux -Recurse -Force -ErrorAction SilentlyContinue
+                Write-Host "==> cleared old dist-linux artifacts" -ForegroundColor DarkGray
             }
             Invoke-Step (Get-PythonExe) (@('scripts/release.py','release-all') + $relArgs)
         } }

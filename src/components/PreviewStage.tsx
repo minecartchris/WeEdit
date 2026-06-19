@@ -161,6 +161,18 @@ function VideoLayer({
     }
   }, [isPlaying]);
 
+  // Force-stop playback when this layer is torn down (clip cut to a different
+  // media item, or scrubbing jumped past it). Some WebViews keep an in-flight
+  // play() running for a moment after the <video> is removed from the DOM, so
+  // its audio briefly overlaps the next clip's — heard as doubled audio. An
+  // explicit pause on unmount silences it immediately.
+  useEffect(() => {
+    const v = ref.current;
+    return () => {
+      v?.pause();
+    };
+  }, []);
+
   // Volume + opacity. When the user has muted a specific stream we hand audio
   // off to the extracted <audio> siblings and silence the muxed track; otherwise
   // the <video> carries the sound itself (boost-aware via applyLoudness).
@@ -253,6 +265,15 @@ function ExtractedAudioTrack({
       a.pause();
     }
   }, [isPlaying]);
+
+  // See VideoLayer's matching cleanup: force-stop on unmount so a torn-down
+  // track can't keep sounding alongside whatever replaces it.
+  useEffect(() => {
+    const a = ref.current;
+    return () => {
+      a?.pause();
+    };
+  }, []);
 
   useEffect(() => {
     const a = ref.current;
@@ -391,6 +412,15 @@ function AudioLayer({
       a.pause();
     }
   }, [isPlaying]);
+
+  // See VideoLayer's matching cleanup: force-stop on unmount so a torn-down
+  // audio clip can't keep sounding alongside whatever replaces it.
+  useEffect(() => {
+    const a = ref.current;
+    return () => {
+      a?.pause();
+    };
+  }, []);
 
   useEffect(() => {
     const a = ref.current;

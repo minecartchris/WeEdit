@@ -7,6 +7,7 @@ import {
   Music,
   Plus,
   Redo2,
+  RotateCcw,
   Scissors,
   Search,
   Trash2,
@@ -494,6 +495,15 @@ function TrackHeader({ track }: { track: Track }) {
           <MenuItem onSelect={() => setMuted(track.id, !track.muted)}>
             {track.muted ? "Unmute" : "Mute"}
           </MenuItem>
+          {audible && (
+            <MenuItem
+              icon={RotateCcw}
+              disabled={track.volume === 1}
+              onSelect={() => setVolume(track.id, 1)}
+            >
+              Reset volume
+            </MenuItem>
+          )}
           <MenuSeparator />
           <MenuItem icon={ArrowUp} disabled={isFirst} onSelect={() => moveTrack(track.id, "up")}>
             Move up

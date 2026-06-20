@@ -4,6 +4,8 @@
 
 import { useEffect, useState } from "react";
 import { toPlayableUrl } from "@/lib/media";
+import { ffmpegWaveformPeaks } from "@/lib/ffmpeg";
+import { isTauri } from "@/lib/platform";
 import type { MediaItem } from "@/types";
 
 export interface WaveformData {
@@ -65,7 +67,29 @@ function computePeaks(buffer: AudioBuffer): WaveformData {
   return { peaks, bucketsPerSec };
 }
 
-async function decode(media: MediaItem): Promise<WaveformData | null> {
+// On the desktop app, decode via ffmpeg (the Rust `ffmpeg_waveform_peaks`
+// command) instead of the browser. ffmpeg uses the same demux/decode
+// pipeline already trusted for export and the one real players use, so
+// container-level encoder delay / priming samples are handled the same way
+// actual playback handles them. The browser's `decodeAudioData` doesn't
+// always trim those leading samples, which made the waveform's peaks appear
+// later than the audio is actually heard (#20). It's also far lighter on
+// memory than pulling the entire full-quality source into a Web Audio
+// buffer, since it decodes to a low-rate mono PCM stream.
+async function decodeViaFfmpeg(media: MediaItem): Promise<WaveformData | null> {
+  try {
+    const { peaks, bucketsPerSec } = await ffmpegWaveformPeaks({
+      sourcePath: media.src,
+      targetBucketsPerSec: BUCKETS_PER_SEC,
+    });
+    return { peaks, bucketsPerSec };
+  } catch (err) {
+    console.warn(`ffmpeg waveform decode failed for ${media.name}, falling back to browser decode:`, err);
+    return null;
+  }
+}
+
+async function decodeViaBrowser(media: MediaItem): Promise<WaveformData | null> {
   try {
     const res = await fetch(toPlayableUrl(media.src));
     const bytes = await res.arrayBuffer();
@@ -81,6 +105,17 @@ async function decode(media: MediaItem): Promise<WaveformData | null> {
     console.warn(`Waveform decode failed for ${media.name}:`, err);
     return null;
   }
+}
+
+async function decode(media: MediaItem): Promise<WaveformData | null> {
+  if (isTauri()) {
+    const viaFfmpeg = await decodeViaFfmpeg(media);
+    if (viaFfmpeg) return viaFfmpeg;
+    // Fall through to the browser decode below if ffmpeg isn't available or
+    // failed (e.g. user hasn't installed it) — a slightly-misaligned
+    // waveform is better than none.
+  }
+  return decodeViaBrowser(media);
 }
 
 function loadWaveform(media: MediaItem): Promise<WaveformData | null> {

@@ -2,8 +2,10 @@ import { AudioLines, Diamond, MousePointerSquareDashed, SlidersHorizontal, Volum
 import { NumberField } from "@/components/ui/NumberField";
 import {
   KEYFRAME_EPSILON,
+  MAX_CLIP_SPEED,
   MAX_SCALE,
   MAX_TRANSITION_SEC,
+  MIN_CLIP_SPEED,
   MIN_SCALE,
   TEXT_CHAR_LIMIT,
   pctToPx,
@@ -327,8 +329,8 @@ function MediaProps({ clip }: { clip: MediaClip }) {
           <NumberField
             label="Speed"
             value={Math.round((clip.speed ?? 1) * 100)}
-            min={25}
-            max={400}
+            min={MIN_CLIP_SPEED * 100}
+            max={MAX_CLIP_SPEED * 100}
             step={5}
             suffix="%"
             resetTo={100}

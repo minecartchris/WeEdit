@@ -17,7 +17,7 @@ export const LATEST_RELEASE_URL = `${GITHUB_URL}/releases/latest`;
 export const LATEST_RELEASE_API = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`;
 
 /** Public marketing site / landing page. */
-export const WEBSITE_URL = "https://weedit.minecartchris.cc";
+export const WEBSITE_URL = "https://weditapp.com";
 
 /**
  * Opens a URL in the user's default browser. On the desktop app this hands off

@@ -110,3 +110,33 @@ export async function ffmpegRun(args: {
 export async function ffmpegCancel(exportId: string): Promise<void> {
   await invoke("ffmpeg_cancel", { exportId });
 }
+
+// ── Waveform peaks ──
+
+export interface WaveformPeaksResult {
+  peaks: Float32Array;
+  bucketsPerSec: number;
+}
+
+/**
+ * Computes peak-amplitude waveform data for `sourcePath` by decoding through
+ * ffmpeg (same demux/decode pipeline as export/playback), instead of the
+ * browser's `decodeAudioData`. See the Rust-side `ffmpeg_waveform_peaks` doc
+ * comment for why: decodeAudioData can leave a container's leading
+ * encoder-delay samples in, which visually shows up as the waveform's peaks
+ * starting later than the audio is actually heard.
+ */
+export async function ffmpegWaveformPeaks(args: {
+  sourcePath: string;
+  targetBucketsPerSec: number;
+}): Promise<WaveformPeaksResult> {
+  const result = await invoke<{ peaks: number[]; bucketsPerSec: number }>(
+    "ffmpeg_waveform_peaks",
+    {
+      sourcePath: args.sourcePath,
+      targetBucketsPerSec: args.targetBucketsPerSec,
+      customPath: customPath(),
+    },
+  );
+  return { peaks: Float32Array.from(result.peaks), bucketsPerSec: result.bucketsPerSec };
+}

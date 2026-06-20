@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::ffi::OsStr;
 use std::process::{Command, Stdio};
@@ -581,6 +581,127 @@ fn ffmpeg_extract_audio_tracks_blocking(
         results.push(ExtractedTrack { index: i, filepath: out_path });
     }
     Ok(results)
+}
+
+// ── ffmpeg waveform peaks (used by the timeline's audio-clip waveform) ──
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WaveformPeaks {
+    peaks: Vec<f32>,
+    buckets_per_sec: f64,
+}
+
+/// Computes peak-amplitude waveform data for `source_path` by decoding through
+/// ffmpeg instead of the browser's `decodeAudioData`.
+///
+/// Why this exists (see #20): the timeline waveform used to be decoded
+/// client-side via Web Audio's `decodeAudioData`. That decode path doesn't
+/// always trim a container's leading encoder-delay/priming samples (notably
+/// AAC) the same way ffmpeg and `<video>`/`<audio>` element playback do — so
+/// the decoded PCM buffer effectively started slightly later than what's
+/// actually heard during playback. Visually that shows up exactly as
+/// reported: the waveform's peaks for the start of speech are pushed later
+/// than where the audio is actually heard, so a word's onset shows no bars
+/// until partway through it. Decoding through ffmpeg here uses the same
+/// demux/decode pipeline already trusted for export (which is what users
+/// actually watch/hear), so the waveform now lines up with real playback.
+#[tauri::command]
+async fn ffmpeg_waveform_peaks(
+    source_path: String,
+    target_buckets_per_sec: f64,
+    custom_path: Option<String>,
+) -> Result<WaveformPeaks, String> {
+    run_blocking("ffmpeg_waveform_peaks", move || {
+        ffmpeg_waveform_peaks_blocking(source_path, target_buckets_per_sec, custom_path)
+    })
+    .await
+}
+
+fn ffmpeg_waveform_peaks_blocking(
+    source_path: String,
+    target_buckets_per_sec: f64,
+    custom_path: Option<String>,
+) -> Result<WaveformPeaks, String> {
+    let bin = find_ffmpeg_binary("ffmpeg", custom_path.as_deref())
+        .ok_or_else(|| FFMPEG_INSTALL_HINT.to_string())?;
+
+    // Decode to mono 16-bit PCM at a low fixed sample rate — plenty of
+    // resolution for peak/envelope visualization, and far lighter than the
+    // full-quality stereo float PCM the old client-side decode pulled into
+    // memory (which is what forced the duration caps in waveform.ts).
+    const DECODE_RATE: u32 = 8000;
+    let target = if target_buckets_per_sec.is_finite() && target_buckets_per_sec > 0.0 {
+        target_buckets_per_sec
+    } else {
+        50.0
+    };
+    let samples_per_bucket = ((DECODE_RATE as f64) / target).round().max(1.0) as usize;
+    let actual_buckets_per_sec = DECODE_RATE as f64 / samples_per_bucket as f64;
+
+    let mut child = command(&bin)
+        .args([
+            "-hide_banner",
+            "-loglevel", "error",
+            "-i", &source_path,
+            "-vn",
+            "-map", "0:a:0?",
+            "-ac", "1",
+            "-ar", &DECODE_RATE.to_string(),
+            "-f", "s16le",
+            "pipe:1",
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to run ffmpeg: {e}"))?;
+
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "Failed to capture ffmpeg stdout".to_string())?;
+    let mut raw = Vec::new();
+    stdout
+        .read_to_end(&mut raw)
+        .map_err(|e| format!("Failed to read ffmpeg output: {e}"))?;
+
+    let mut stderr_buf = String::new();
+    if let Some(mut se) = child.stderr.take() {
+        let _ = se.read_to_string(&mut stderr_buf);
+    }
+    let status = child
+        .wait()
+        .map_err(|e| format!("ffmpeg wait failed: {e}"))?;
+    if !status.success() {
+        return Err(format!("ffmpeg decode failed: {}", stderr_buf.trim()));
+    }
+
+    let sample_count = raw.len() / 2;
+    let bucket_count = if sample_count == 0 {
+        1
+    } else {
+        (sample_count + samples_per_bucket - 1) / samples_per_bucket
+    };
+    let mut peaks = vec![0f32; bucket_count];
+    for (b, slot) in peaks.iter_mut().enumerate() {
+        let start = b * samples_per_bucket;
+        let end = ((b + 1) * samples_per_bucket).min(sample_count);
+        let mut peak: f32 = 0.0;
+        let mut i = start;
+        while i < end {
+            let off = i * 2;
+            let sample = i16::from_le_bytes([raw[off], raw[off + 1]]);
+            let v = (sample as f32 / 32768.0).abs();
+            if v > peak {
+                peak = v;
+            }
+            i += 1;
+        }
+        *slot = peak;
+    }
+
+    Ok(WaveformPeaks { peaks, buckets_per_sec: actual_buckets_per_sec })
 }
 
 // ── ffmpeg export (timeline → mp4 via filter_complex) ──
@@ -1292,6 +1413,7 @@ pub fn run() {
             http_download,
             ffprobe_audio_streams,
             ffmpeg_extract_audio_tracks,
+            ffmpeg_waveform_peaks,
             ffmpeg_check,
             ffmpeg_run,
             ffmpeg_cancel,

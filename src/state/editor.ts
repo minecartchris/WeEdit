@@ -9,6 +9,7 @@ import {
 } from "@/lib/clips";
 import type {
   AspectRatio,
+  AudioTrackInfo,
   Clip,
   Keyframe,
   LibraryFilter,
@@ -212,6 +213,14 @@ function nextZIndex(existing: Track[], kind: TrackKind): number {
   const base = kind === "text" ? 30 : kind === "video" ? 20 : 10;
   const peer = existing.filter((t) => t.kind === kind).map((t) => t.zIndex);
   return peer.length ? Math.max(...peer) + 1 : base;
+}
+
+// Short human label for a source audio stream, used to name the track created
+// when detachAudio splits a multi-stream video's audio out one-per-stream.
+function audioTrackLabel(t: AudioTrackInfo): string {
+  if (t.title) return t.title;
+  if (t.language) return `Track ${t.index + 1} · ${t.language}`;
+  return `Track ${t.index + 1}`;
 }
 
 export const useEditor = create<EditorState>((set, get) => ({
@@ -567,8 +576,69 @@ export const useEditor = create<EditorState>((set, get) => ({
     set((s) => {
       const clip = s.clips[clipId];
       if (!clip || clip.kind !== "video") return s;
-      // Put the detached audio on its own new audio track so it can never
-      // collide with existing audio clips, and the user can move it freely.
+      const media = s.media.find((m) => m.id === clip.mediaId);
+      const sourceTracks = media?.audioTracks;
+
+      // Multi-stream source (e.g. separate mic/board tracks from a multicam
+      // recording): give each stream its own new audio track + clip, instead
+      // of bundling every stream into one downmixed clip. That way each
+      // stream gets its own mute toggle (the normal per-track mute control)
+      // and none of them can collide with each other or existing clips.
+      if (sourceTracks && sourceTracks.length > 0) {
+        const clipMuted = clip.mutedTracks ?? [];
+        const newClips: Record<string, Clip> = { ...s.clips };
+        const newTracks: Track[] = [];
+        const newSelection: string[] = [];
+
+        for (const t of sourceTracks) {
+          const trackId = `track-audio-${crypto.randomUUID().slice(0, 8)}`;
+          const audioClipId = crypto.randomUUID();
+          const audioClip: Clip = {
+            id: audioClipId,
+            trackId,
+            startSec: clip.startSec,
+            durationSec: clip.durationSec,
+            sourceInSec: clip.sourceInSec,
+            kind: "audio",
+            mediaId: clip.mediaId,
+            sourceTrackIndex: t.index,
+            opacity: 1,
+            volume: clip.volume > 0 ? clip.volume : 1,
+            xPct: 50,
+            yPct: 50,
+            scale: 1,
+            rotation: 0,
+            tilt: 0,
+          };
+          newClips[audioClipId] = audioClip;
+          newTracks.push({
+            id: trackId,
+            kind: "audio",
+            name: `${nextTrackName([...s.tracks, ...newTracks], "audio")} (${audioTrackLabel(t)})`,
+            volume: 1,
+            // Carry over whatever mute state this stream already had, whether
+            // set per-clip (on the video clip we're detaching from) or at the
+            // media level, so detaching doesn't change what's audible.
+            muted: clipMuted.includes(t.index) || t.muted,
+            zIndex: nextZIndex([...s.tracks, ...newTracks], "audio"),
+            clipIds: [audioClipId],
+          });
+          newSelection.push(audioClipId);
+        }
+
+        return withHistory(s, {
+          tracks: [...s.tracks, ...newTracks],
+          clips: {
+            ...newClips,
+            // Mute the source video's audio — its sound now lives on the new tracks.
+            [clipId]: { ...clip, volume: 0 } as Clip,
+          },
+          selectedClipIds: newSelection,
+        });
+      }
+
+      // Single-stream source — one clip on one new track, playing the media's
+      // own (already-muxed) audio.
       const trackId = `track-audio-${crypto.randomUUID().slice(0, 8)}`;
       const audioClipId = crypto.randomUUID();
       const audioClip: Clip = {

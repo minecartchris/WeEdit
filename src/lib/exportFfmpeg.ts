@@ -230,6 +230,21 @@ function compileAudio(ctx: AudioCompileCtx): string | null {
 
     if (m.kind === "image") continue;
 
+    // A standalone "audio" clip created by detaching one specific stream out
+    // of a multi-stream video (detachAudio) — export just that stream, not
+    // every live stream of the source media, or each detached track would
+    // re-mix the whole downmix and the exported audio would be duplicated.
+    if (mc.kind === "audio" && mc.sourceTrackIndex !== undefined && m.audioTracks) {
+      const t = m.audioTracks.find((tt) => tt.index === mc.sourceTrackIndex);
+      if (!t || t.muted) continue;
+      const inputIdx = audioTrackInput.get(`${m.id}:${t.index}`);
+      if (inputIdx === undefined) continue;
+      const out = next("ac");
+      parts.push(`[${inputIdx}:a]${trim},${adelay},${volume}[${out}]`);
+      audioOutLabels.push(`[${out}]`);
+      continue;
+    }
+
     if (m.kind === "audio") {
       const inputIdx = mediaSrcInput.get(m.id);
       if (inputIdx === undefined) continue;

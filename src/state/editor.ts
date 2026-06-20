@@ -625,11 +625,27 @@ export const useEditor = create<EditorState>((set, get) => ({
           maxDur = Math.min(maxDur, other.startSec - mc.startSec);
         }
       }
-      newDur = Math.max(MIN_CLIP_DURATION, Math.min(maxDur, newDur));
+      const clampedDur = Math.max(MIN_CLIP_DURATION, Math.min(maxDur, newDur));
+      // If the neighbor/min-duration clamp kicked in, `clampedDur` no longer
+      // matches `sp` under the sourceSpan = durationSec * speed invariant.
+      // Storing the requested `sp` anyway would silently shrink the source
+      // span this clip thinks it covers, and that corrupted (smaller) span
+      // becomes the basis for the *next* speed change — so a clip that gets
+      // clamped once during a gradual edit (e.g. holding the speed field's
+      // up arrow, one small step at a time) permanently drifts to a shorter
+      // duration than a clip of the same source nudged there in one jump,
+      // even though both were set to the same target speed. Re-derive the
+      // effective speed from the clamped duration instead, so the invariant
+      // — and therefore the true source span — always holds.
+      const effectiveSpeed =
+        clampedDur === newDur ? sp : Math.max(0.25, Math.min(4, sourceSpan / clampedDur));
       // No history here — like updateClip, the slider snapshots once on mousedown
       // so a whole speed drag collapses into a single undo entry.
       return {
-        clips: { ...s.clips, [clipId]: { ...mc, speed: sp, durationSec: newDur } as Clip },
+        clips: {
+          ...s.clips,
+          [clipId]: { ...mc, speed: effectiveSpeed, durationSec: clampedDur } as Clip,
+        },
       };
     }),
 

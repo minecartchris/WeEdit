@@ -11,8 +11,10 @@
 // be called once per element and permanently taps its output), so we keep a
 // WeakMap of the gain nodes and drive everything through them thereafter.
 
-/** Highest volume multiplier the UI allows (200% = +6 dB-ish boost). */
-export const MAX_VOLUME = 2;
+/** Highest volume multiplier the UI allows (400% = +12 dB-ish boost). Raised
+ *  from 200% so clips whose source audio is quiet can still be boosted to a
+ *  usable level. */
+export const MAX_VOLUME = 4;
 
 let ctx: AudioContext | null = null;
 const gains = new WeakMap<HTMLMediaElement, GainNode>();

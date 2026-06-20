@@ -21,6 +21,7 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 import { ClipBlock } from "@/components/ClipBlock";
 import { CollaboratorCursors } from "@/components/CollaboratorCursors";
 import { Menu, MenuItem, MenuLabel, MenuSeparator } from "@/components/ui/Menu";
+import { MAX_VOLUME } from "@/lib/audioGain";
 import { isMediaCompatibleWithTrack } from "@/lib/clips";
 import { formatTimecode, useEditor } from "@/state/editor";
 import type { Clip, Track, TrackKind } from "@/types";
@@ -531,7 +532,7 @@ function TrackHeader({ track }: { track: Track }) {
           <input
             type="range"
             min={0}
-            max={2}
+            max={MAX_VOLUME}
             step={0.01}
             value={track.volume}
             onChange={(e) => setVolume(track.id, parseFloat(e.target.value))}

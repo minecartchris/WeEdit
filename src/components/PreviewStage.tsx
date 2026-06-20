@@ -398,10 +398,19 @@ function AudioLayer({
     applyLoudness(a, volume);
   }, [volume]);
 
+  // Detached audio from a multi-stream video plays the specific extracted
+  // stream file (clip.sourceTrackIndex), not the video's own muxed audio —
+  // otherwise every detached stream would play the same full downmix.
+  const trackFile =
+    clip.sourceTrackIndex !== undefined
+      ? media.audioTracks?.find((t) => t.index === clip.sourceTrackIndex)?.filepath
+      : undefined;
+  const audioSrc = trackFile ?? media.src;
+
   return (
     <audio
       ref={ref}
-      src={toPlayableUrl(media.src)}
+      src={toPlayableUrl(audioSrc)}
       preload="auto"
       crossOrigin="anonymous"
     />

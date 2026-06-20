@@ -153,6 +153,13 @@ export interface MediaClip extends ClipBase, Transform {
    * copy/paste) can mute different streams independently.
    */
   mutedTracks?: number[];
+  /**
+   * For a standalone "audio" clip produced by detaching a multi-stream video's
+   * audio (see `detachAudio`), the index into the source media's `audioTracks`
+   * this clip plays. Undefined means "play the media's own muxed audio" (plain
+   * audio files, or videos with a single audio stream).
+   */
+  sourceTrackIndex?: number;
 }
 
 export interface TextClip extends ClipBase, Transform {

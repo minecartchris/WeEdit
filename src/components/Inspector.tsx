@@ -11,6 +11,7 @@ import {
   pxToPct,
   resolveTransform,
 } from "@/lib/clips";
+import { MAX_VOLUME } from "@/lib/audioGain";
 import { useEditor } from "@/state/editor";
 import { usePrefs } from "@/state/prefs";
 import type { AudioTrackInfo, Clip, MediaClip, TextClip, TransitionType } from "@/types";
@@ -309,7 +310,7 @@ function MediaProps({ clip }: { clip: MediaClip }) {
             label="Volume"
             value={Math.round(clip.volume * 100)}
             min={0}
-            max={200}
+            max={MAX_VOLUME * 100}
             suffix="%"
             resetTo={100}
             onCommitStart={pushHistory}

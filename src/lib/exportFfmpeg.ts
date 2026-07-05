@@ -138,7 +138,7 @@ export function compileExport(input: ExportInputs, opts: ExportOptions): Compile
     const fontPath = fontPathFor(tc.fontFamily);
     const newLabel = `txt${i + 1}`;
     parts.push(
-      `[${lastVideoLabel}]drawtext=fontfile='${fontPath}':text='${text}':x='${xExpr}':y='${yExpr}':fontsize=${fontsize}:fontcolor=${colorArg}:shadowx=2:shadowy=2:shadowcolor=black@0.6:enable='between(t,${tc.startSec.toFixed(3)},${(tc.startSec + tc.durationSec).toFixed(3)})'[${newLabel}]`,
+      `[${lastVideoLabel}]drawtext=fontfile='${fontPath}':text='${text}':expansion=none:x='${xExpr}':y='${yExpr}':fontsize=${fontsize}:fontcolor=${colorArg}:shadowx=2:shadowy=2:shadowcolor=black@0.6:enable='between(t,${tc.startSec.toFixed(3)},${(tc.startSec + tc.durationSec).toFixed(3)})'[${newLabel}]`,
     );
     lastVideoLabel = newLabel;
   });
@@ -343,15 +343,26 @@ function collectVideoClipsByZOrder(
   return out;
 }
 
-// ffmpeg drawtext text escaping: backslash, single quote, and colon all need
-// escaping so they don't terminate the filter argument or break the parser.
+// Escape user text for a drawtext `text='...'` value. The value sits inside a
+// graph-level single-quoted string and the filter carries `:expansion=none`.
+// All rules verified against the bundled ffmpeg 8.1:
+//   \  → \\   drawtext strips one backslash level.
+//   '  → ’    A literal ASCII apostrophe CANNOT survive inside a single-quoted
+//             drawtext value: no escaping renders it — it either closes the
+//             quote (corrupting quote parity for the *rest* of the graph, so a
+//             later `enable='between(t,49.758,…)'` loses its quotes and ffmpeg
+//             reads `49.758` as a filter name → "No such filter"), or draws
+//             nothing. So map it to a typographic apostrophe, which renders.
+//   :  → \:   colon separates filter options even inside single quotes.
+//   %  → \%   percent begins a %{…} expansion; escape it (needs expansion=none).
+//   newline → a real "\n"; drawtext renders it as a line break.
 function escapeDrawText(text: string): string {
   return text
-    .replace(/\\/g, "\\\\\\\\")
-    .replace(/'/g, "\\\\\\'")
-    .replace(/:/g, "\\\\:")
+    .replace(/\\/g, "\\\\")
+    .replace(/'/g, "’")
+    .replace(/:/g, "\\:")
     .replace(/%/g, "\\%")
-    .replace(/\r?\n/g, "\\n");
+    .replace(/\r?\n/g, "\n");
 }
 
 // Maps our font-family CSS strings to absolute Windows font paths. drawtext

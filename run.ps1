@@ -384,7 +384,10 @@ $Tasks = [ordered]@{
             Write-Host "==> Done. Removed $n artifact path(s)." -ForegroundColor Green
         } }
     'release'         = @{ Desc = 'Build, sign & publish a release: Windows + Linux (.deb/.AppImage via WSL)'; Run = {
-            $relArgs = ConvertTo-ReleaseArgs $Rest
+            # @(...) forces array context: ConvertTo-ReleaseArgs unwraps to a
+            # bare string when it returns a single element (e.g. just -Push),
+            # and a scalar `$relArgs += @(...)` would string-concat, not append.
+            $relArgs = @(ConvertTo-ReleaseArgs $Rest)
             if (-not (Test-HasNotesArg $Rest)) {
                 $notes = New-ReleaseNotes
                 if ($notes) { $relArgs += @('--notes', $notes) }
@@ -399,7 +402,7 @@ $Tasks = [ordered]@{
             Invoke-Step (Get-PythonExe) (@('scripts/release.py','release-all') + $relArgs)
         } }
     'release:win'     = @{ Desc = 'Windows-only release (skip the Linux build)';   Run = {
-            $relArgs = ConvertTo-ReleaseArgs $Rest
+            $relArgs = @(ConvertTo-ReleaseArgs $Rest)  # force array; see `release` note
             if (-not (Test-HasNotesArg $Rest)) {
                 $notes = New-ReleaseNotes
                 if ($notes) { $relArgs += @('--notes', $notes) }

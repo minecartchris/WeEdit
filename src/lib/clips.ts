@@ -115,6 +115,27 @@ function pickTransform(t: ResolvedTransform): ResolvedTransform {
   return { xPct: t.xPct, yPct: t.yPct, scale: t.scale, rotation: t.rotation, tilt: t.tilt };
 }
 
+/** Clamp a single crop-edge percentage into the safe 0..99 range. */
+export function clampCropPct(v: number): number {
+  if (!Number.isFinite(v)) return 0;
+  return Math.max(0, Math.min(99, v));
+}
+
+/**
+ * CSS `clip-path: inset(...)` for a clip's crop percentages. Returns undefined
+ * when there's no crop (or it's a no-op), so callers can spread it in without
+ * an extra branch.
+ */
+export function cropClipPath(crop?: MediaClip["crop"]): string | undefined {
+  if (!crop) return undefined;
+  const top = clampCropPct(crop.top);
+  const right = clampCropPct(crop.right);
+  const bottom = clampCropPct(crop.bottom);
+  const left = clampCropPct(crop.left);
+  if (top === 0 && right === 0 && bottom === 0 && left === 0) return undefined;
+  return `inset(${top}% ${right}% ${bottom}% ${left}%)`;
+}
+
 /** Convert a percentage (0..100) of a dimension to pixels, and back. */
 export function pctToPx(pct: number, dimensionPx: number): number {
   return Math.round((pct / 100) * dimensionPx);

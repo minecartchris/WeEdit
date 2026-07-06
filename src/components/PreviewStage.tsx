@@ -1,7 +1,7 @@
 import { toPlayableUrl } from "@/lib/media";
 import { MAX_VOLUME, applyLoudness } from "@/lib/audioGain";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { MAX_SCALE, MIN_SCALE, previousClipOnTrack, resolveTransform, type ResolvedTransform } from "@/lib/clips";
+import { MAX_SCALE, MIN_SCALE, cropClipPath, previousClipOnTrack, resolveTransform, type ResolvedTransform } from "@/lib/clips";
 import { useEditor } from "@/state/editor";
 import type { AspectRatio, Clip, MediaClip, MediaItem, TextClip } from "@/types";
 
@@ -17,12 +17,35 @@ interface Props {
   aspect: AspectRatio;
 }
 
+// Prefetch every image media item's decoded bitmap once so switching between
+// adjacent image clips (common when they're placed edge-to-edge with no gap)
+// doesn't show a blank frame while the new <img> loads/decodes for the first
+// time. <video> elements avoid this because `preload="auto"` warms them ahead
+// of time; <img> has no equivalent, so without this the timeline can flash
+// "no image" for a frame or two right at the clip boundary, even though the
+// clips themselves are perfectly adjacent.
+const imagePrefetchCache = new Set<string>();
+function usePrefetchImages(media: MediaItem[]) {
+  useEffect(() => {
+    for (const m of media) {
+      if (m.kind !== "image") continue;
+      const url = toPlayableUrl(m.src);
+      if (imagePrefetchCache.has(url)) continue;
+      imagePrefetchCache.add(url);
+      const img = new Image();
+      img.decoding = "async";
+      img.src = url;
+    }
+  }, [media]);
+}
+
 export function PreviewStage({ aspect }: Props) {
   const playheadSec = useEditor((s) => s.playheadSec);
   const isPlaying = useEditor((s) => s.isPlaying);
   const tracks = useEditor((s) => s.tracks);
   const clips = useEditor((s) => s.clips);
   const media = useEditor((s) => s.media);
+  usePrefetchImages(media);
 
   // All visible (video/image) layers to draw at the playhead, back-to-front by
   // zIndex. One active clip per video track — plus, during a transition, the
@@ -183,7 +206,7 @@ function VideoLayer({
           preload="auto"
           crossOrigin="anonymous"
           className="w-full h-full object-contain"
-          style={{ opacity: clip.opacity * extraOpacity }}
+          style={{ opacity: clip.opacity * extraOpacity, clipPath: cropClipPath(clip.crop) }}
         />
       </div>
       {useExtractedAudio &&
@@ -293,7 +316,7 @@ function ImageLayer({
         src={toPlayableUrl(media.src)}
         alt=""
         className="w-full h-full object-contain"
-        style={{ opacity: clip.opacity * extraOpacity }}
+        style={{ opacity: clip.opacity * extraOpacity, clipPath: cropClipPath(clip.crop) }}
       />
     </div>
   );

@@ -13,7 +13,7 @@ import {
   RefreshCw,
   Zap,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Modal } from "@/components/ui/Modal";
 import {
   EXPORT_PRESETS,
@@ -21,7 +21,7 @@ import {
   type ExportPreset,
   type VideoCodec,
 } from "@/lib/exportFfmpeg";
-import { checkFfmpeg, type FfmpegCheck } from "@/lib/ffmpeg";
+import { checkFfmpeg, checkNvenc, type FfmpegCheck } from "@/lib/ffmpeg";
 import { useEditor } from "@/state/editor";
 import { useExports } from "@/state/exports";
 import { useIntegrations } from "@/state/integrations";
@@ -61,6 +61,25 @@ export function ExportModal({ open, onClose }: Props) {
     if (!open) return;
     void recheckFfmpeg();
   }, [open, ffmpegPath, recheckFfmpeg]);
+
+  // NVENC was previously the hardcoded default encoder for every preset
+  // (including Custom), so on any machine without a working NVIDIA
+  // GPU/driver, every export failed identically no matter what the user
+  // picked. Probe for real NVENC support and fall back to the CPU encoder
+  // when it's not available — but only if the user hasn't already made an
+  // explicit choice, so we never override a deliberate selection.
+  const [nvencAvailable, setNvencAvailable] = useState<boolean | null>(null);
+  const codecTouchedRef = useRef(false);
+  useEffect(() => {
+    if (!open) return;
+    void (async () => {
+      const available = await checkNvenc();
+      setNvencAvailable(available);
+      if (!available && !codecTouchedRef.current) {
+        setCodec("libx264");
+      }
+    })();
+  }, [open, ffmpegPath]);
 
   const locateFfmpeg = async () => {
     const picked = await openDialog({
@@ -266,18 +285,35 @@ export function ExportModal({ open, onClose }: Props) {
             <CodecCard
               icon={Zap}
               title="H.264 NVENC"
-              subtitle="GPU · fast (recommended)"
+              subtitle={
+                nvencAvailable === false
+                  ? "GPU · not available on this system"
+                  : "GPU · fast (recommended)"
+              }
               checked={codec === "h264_nvenc"}
-              onSelect={() => setCodec("h264_nvenc")}
+              disabled={nvencAvailable === false}
+              onSelect={() => {
+                codecTouchedRef.current = true;
+                setCodec("h264_nvenc");
+              }}
             />
             <CodecCard
               icon={Cpu}
               title="H.264 libx264"
               subtitle="CPU · highest quality at low bitrates"
               checked={codec === "libx264"}
-              onSelect={() => setCodec("libx264")}
+              onSelect={() => {
+                codecTouchedRef.current = true;
+                setCodec("libx264");
+              }}
             />
           </div>
+          {nvencAvailable === false && (
+            <div className="text-[11px] text-we-muted mt-1.5">
+              NVENC couldn't encode a test frame on this machine (no supported NVIDIA GPU/driver
+              found), so exports use the CPU encoder instead.
+            </div>
+          )}
         </Section>
 
         <Section title="Output">
@@ -429,23 +465,31 @@ function CodecCard({
   title,
   subtitle,
   checked,
+  disabled,
   onSelect,
 }: {
   icon: typeof Zap;
   title: string;
   subtitle: string;
   checked: boolean;
+  disabled?: boolean;
   onSelect: () => void;
 }) {
   return (
     <button
       onClick={onSelect}
+      disabled={disabled}
+      title={disabled ? "Not available on this system" : undefined}
       className={[
         "flex-1 text-left rounded-md border px-3 py-2.5 transition-colors flex items-start gap-2",
-        checked ? "border-we-teal bg-we-teal/10" : "border-we-border bg-we-panel hover:bg-we-hover",
+        disabled
+          ? "opacity-50 cursor-not-allowed border-we-border bg-we-panel"
+          : checked
+          ? "border-we-teal bg-we-teal/10"
+          : "border-we-border bg-we-panel hover:bg-we-hover",
       ].join(" ")}
     >
-      <Icon className={["w-4 h-4 mt-0.5", checked ? "text-we-teal" : "text-we-muted"].join(" ")} />
+      <Icon className={["w-4 h-4 mt-0.5", checked && !disabled ? "text-we-teal" : "text-we-muted"].join(" ")} />
       <div className="min-w-0">
         <div className="text-sm font-medium text-we-ink">{title}</div>
         <div className="text-[11px] text-we-muted">{subtitle}</div>

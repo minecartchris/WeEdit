@@ -6,6 +6,7 @@ import {
   MAX_TRANSITION_SEC,
   MIN_SCALE,
   TEXT_CHAR_LIMIT,
+  clampCropPct,
   pctToPx,
   previousClipOnTrack,
   pxToPct,
@@ -60,6 +61,7 @@ function ClipInspector({ clip }: { clip: Clip }) {
     <div className="p-4 flex flex-col gap-5">
       <KindBadge clip={clip} />
       {clip.kind === "text" ? <TextProps clip={clip} /> : <MediaProps clip={clip} />}
+      {(clip.kind === "video" || clip.kind === "image") && <CropProps clip={clip} />}
       {clip.kind !== "audio" && <TransformProps clip={clip} />}
       {clip.kind !== "audio" && <KeyframeProps clip={clip} />}
       {(clip.kind === "video" || clip.kind === "image") && <TransitionProps clip={clip} />}
@@ -133,6 +135,82 @@ function KindBadge({ clip }: { clip: Clip }) {
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return <div className="text-xs font-semibold text-we-ink">{children}</div>;
+}
+
+function CropProps({ clip }: { clip: MediaClip }) {
+  const updateClip = useEditor((s) => s.updateClip);
+  const pushHistory = useEditor((s) => s.pushHistory);
+  const crop = clip.crop ?? { left: 0, right: 0, top: 0, bottom: 0 };
+  const hasCrop = crop.left > 0 || crop.right > 0 || crop.top > 0 || crop.bottom > 0;
+
+  const setEdge = (edge: "left" | "right" | "top" | "bottom", v: number) => {
+    updateClip(clip.id, { crop: { ...crop, [edge]: clampCropPct(v) } });
+  };
+
+  return (
+    <section className="flex flex-col gap-3 border-t border-we-border pt-4">
+      <div className="flex items-center justify-between">
+        <SectionTitle>Crop</SectionTitle>
+        {hasCrop && (
+          <button
+            onClick={() => {
+              pushHistory();
+              updateClip(clip.id, { crop: undefined });
+            }}
+            className="text-[11px] text-we-muted hover:text-we-ink"
+          >
+            Reset
+          </button>
+        )}
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <NumberField
+          label="Left"
+          value={crop.left}
+          min={0}
+          max={99}
+          suffix="%"
+          resetTo={0}
+          onCommitStart={pushHistory}
+          onChange={(v) => setEdge("left", v)}
+        />
+        <NumberField
+          label="Right"
+          value={crop.right}
+          min={0}
+          max={99}
+          suffix="%"
+          resetTo={0}
+          onCommitStart={pushHistory}
+          onChange={(v) => setEdge("right", v)}
+        />
+        <NumberField
+          label="Top"
+          value={crop.top}
+          min={0}
+          max={99}
+          suffix="%"
+          resetTo={0}
+          onCommitStart={pushHistory}
+          onChange={(v) => setEdge("top", v)}
+        />
+        <NumberField
+          label="Bottom"
+          value={crop.bottom}
+          min={0}
+          max={99}
+          suffix="%"
+          resetTo={0}
+          onCommitStart={pushHistory}
+          onChange={(v) => setEdge("bottom", v)}
+        />
+      </div>
+      <p className="text-[10px] text-we-muted leading-4">
+        Trims the visible edges of this clip. Two overlapping clips cropped to
+        opposite halves make a split-screen.
+      </p>
+    </section>
+  );
 }
 
 function TransformProps({ clip }: { clip: MediaClip | TextClip }) {

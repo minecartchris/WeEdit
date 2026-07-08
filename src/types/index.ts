@@ -153,6 +153,19 @@ export interface MediaClip extends ClipBase, Transform {
    * copy/paste) can mute different streams independently.
    */
   mutedTracks?: number[];
+  /**
+   * Percent (0..99) trimmed off each edge of the clip's on-stage box, applied
+   * after the object-contain fit — so cropping 25% off the right keeps the
+   * same effective proportion whether the source is a video or an image.
+   * Undefined (or all-zero) = uncropped. Video/image clips only; text clips
+   * don't support cropping.
+   */
+  crop?: {
+    left: number;
+    right: number;
+    top: number;
+    bottom: number;
+  };
 }
 
 export interface TextClip extends ClipBase, Transform {

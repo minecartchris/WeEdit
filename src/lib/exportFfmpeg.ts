@@ -104,19 +104,49 @@ export function compileExport(input: ExportInputs, opts: ExportOptions): Compile
         ? `${inLabel}loop=loop=-1:size=1,trim=duration=${clip.durationSec.toFixed(3)}`
         : `${inLabel}trim=start=${clip.sourceInSec.toFixed(3)}:duration=${sourceSpan.toFixed(3)}`;
 
+    // Crop trims a percentage off each edge of the *source* frame before the
+    // aspect-fit scale below, matching the preview's clip-path (which trims the
+    // same percentage off the rendered, already-fit box — equivalent since the
+    // fit is a uniform scale). Skipped entirely when there's no crop so the
+    // filter graph for uncropped clips (the vast majority) is unchanged.
+    const cropFilter = cropFilterFor(clip.crop);
+
+    // On-stage position/zoom/rotation. The preview positions a stage-sized box
+    // at (xPct,yPct) with translate(-50%,-50%), then scales/rotates it about
+    // its own center — reproduced here as: pad to canvas size (a stage-sized
+    // box at the default position), zoom by resizing that whole box, rotate it
+    // (transparent fill so corners stay see-through), then let `overlay`'s x/y
+    // expressions center the (possibly resized) box at (xPct%, yPct%) of the
+    // canvas. Keyframed animation isn't carried into the export — this uses
+    // each clip's base (non-keyframed) transform, same as the export's
+    // pre-existing (and still unanimated) handling of text position.
+    const scale = clip.scale ?? 1;
+    const rotationDeg = clip.rotation ?? 0;
+    const zoomFilter = Math.abs(scale - 1) > 1e-3 ? `,scale=iw*${scale.toFixed(4)}:ih*${scale.toFixed(4)}` : "";
+    const rotationRad = (rotationDeg * Math.PI) / 180;
+    const rotateFilter =
+      Math.abs(rotationDeg) > 1e-3
+        ? `,rotate=${rotationRad.toFixed(6)}:c=black@0:ow=rotw(${rotationRad.toFixed(6)}):oh=roth(${rotationRad.toFixed(6)})`
+        : "";
+    const xPct = clip.xPct ?? 50;
+    const yPct = clip.yPct ?? 50;
+    const overlayX = `(main_w*${(xPct / 100).toFixed(4)})-(overlay_w/2)`;
+    const overlayY = `(main_h*${(yPct / 100).toFixed(4)})-(overlay_h/2)`;
+
     parts.push(
-      `${head},setpts=(PTS-STARTPTS)/${speed.toFixed(6)},` +
+      `${head}${cropFilter ? `,${cropFilter}` : ""},setpts=(PTS-STARTPTS)/${speed.toFixed(6)},` +
         `scale=${opts.width}:${opts.height}:force_original_aspect_ratio=decrease,` +
         `pad=${opts.width}:${opts.height}:(ow-iw)/2:(oh-ih)/2:color=black@0,` +
-        `setpts=PTS+${clip.startSec.toFixed(3)}/TB,` +
         `format=yuva420p,` +
         `colorchannelmixer=aa=${clip.opacity.toFixed(3)}` +
+        `${zoomFilter}${rotateFilter},` +
+        `setpts=PTS+${clip.startSec.toFixed(3)}/TB` +
         `[${prepared}]`,
     );
 
     const nextBg = `bg${vCounter}`;
     parts.push(
-      `[${bgLabel}][${prepared}]overlay=enable='between(t,${clip.startSec.toFixed(3)},${(clip.startSec + clip.durationSec).toFixed(3)})'[${nextBg}]`,
+      `[${bgLabel}][${prepared}]overlay=x='${overlayX}':y='${overlayY}':enable='between(t,${clip.startSec.toFixed(3)},${(clip.startSec + clip.durationSec).toFixed(3)})'[${nextBg}]`,
     );
     bgLabel = nextBg;
   }
@@ -131,9 +161,14 @@ export function compileExport(input: ExportInputs, opts: ExportOptions): Compile
     const colorArg = `${tc.color.replace(/^#/, "0x")}`;
     const xExpr = `(w*${(tc.xPct / 100).toFixed(4)})-text_w/2`;
     const yExpr = `(h*${(tc.yPct / 100).toFixed(4)})-text_h/2`;
+    // Zoom applies to text the same way it does to video/image clips (a
+    // multiplier on rendered size). Rotation/tilt aren't supported for text —
+    // ffmpeg's drawtext filter has no rotation parameter — so they're left
+    // out of the export for now (this matches drawtext's own limitation, not
+    // an oversight for video/image clips above).
     const fontsize = Math.max(
       8,
-      Math.round(tc.fontSizePx * (opts.height / Math.max(1, project.height))),
+      Math.round(tc.fontSizePx * (opts.height / Math.max(1, project.height)) * (tc.scale ?? 1)),
     );
     const fontPath = fontPathFor(tc.fontFamily);
     const newLabel = `txt${i + 1}`;
@@ -288,6 +323,36 @@ function compileAudio(ctx: AudioCompileCtx): string | null {
 }
 
 // ── Helpers ──
+
+// Builds the `crop=w:h:x:y` filter for a clip's crop percentages, or null when
+// there's no crop (so callers can skip the comma-separated segment entirely).
+// Percentages are trimmed off each edge of the *source* frame; each pair is
+// clamped so the remaining width/height never hits zero (or goes negative),
+// which ffmpeg would reject.
+function cropFilterFor(crop: MediaClip["crop"] | undefined): string | null {
+  if (!crop) return null;
+  const clampPct = (v: number) => Math.max(0, Math.min(99, v || 0));
+  let left = clampPct(crop.left);
+  let right = clampPct(crop.right);
+  let top = clampPct(crop.top);
+  let bottom = clampPct(crop.bottom);
+  if (left + right >= 100) {
+    const scale = 99 / (left + right);
+    left *= scale;
+    right *= scale;
+  }
+  if (top + bottom >= 100) {
+    const scale = 99 / (top + bottom);
+    top *= scale;
+    bottom *= scale;
+  }
+  if (left === 0 && right === 0 && top === 0 && bottom === 0) return null;
+  const w = (1 - (left + right) / 100).toFixed(4);
+  const h = (1 - (top + bottom) / 100).toFixed(4);
+  const x = (left / 100).toFixed(4);
+  const y = (top / 100).toFixed(4);
+  return `crop=iw*${w}:ih*${h}:iw*${x}:ih*${y}`;
+}
 
 // atempo only accepts factors in [0.5, 2.0]; chain it to reach any speed while
 // preserving pitch (e.g. 4× = atempo=2,atempo=2; 0.25× = atempo=0.5,atempo=0.5).

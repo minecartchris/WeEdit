@@ -9,6 +9,11 @@ export const TEXT_CHAR_LIMIT = 200;
 export const MIN_SCALE = 0.1;
 export const MAX_SCALE = 4;
 
+/** Min/max for clip playback speed (25% to 1000%, matching common NLEs like
+ *  DaVinci Resolve's speed range). */
+export const MIN_CLIP_SPEED = 0.25;
+export const MAX_CLIP_SPEED = 10;
+
 /** Max length of a cross-clip transition, in seconds. */
 export const MAX_TRANSITION_SEC = 5;
 

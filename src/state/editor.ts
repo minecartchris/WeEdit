@@ -2,7 +2,9 @@ import { create } from "zustand";
 import { MAX_VOLUME } from "@/lib/audioGain";
 import {
   KEYFRAME_EPSILON,
+  MAX_CLIP_SPEED,
   MIN_CLIP_DURATION,
+  MIN_CLIP_SPEED,
   clampClipStart,
   isMediaCompatibleWithTrack,
   resolveTransform,
@@ -613,7 +615,7 @@ export const useEditor = create<EditorState>((set, get) => ({
       const clip = s.clips[clipId];
       if (!clip || clip.kind === "text") return s;
       const mc = clip as MediaClip;
-      const sp = Math.max(0.25, Math.min(4, speed));
+      const sp = Math.max(MIN_CLIP_SPEED, Math.min(MAX_CLIP_SPEED, speed));
       const sourceSpan = mc.durationSec * (mc.speed ?? 1);
       let newDur = sourceSpan / sp;
       // Slowing down lengthens the clip — clamp so it can't cover the next clip

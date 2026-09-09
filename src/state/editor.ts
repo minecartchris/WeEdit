@@ -640,7 +640,7 @@ export const useEditor = create<EditorState>((set, get) => ({
       // effective speed from the clamped duration instead, so the invariant
       // — and therefore the true source span — always holds.
       const effectiveSpeed =
-        clampedDur === newDur ? sp : Math.max(0.25, Math.min(4, sourceSpan / clampedDur));
+        clampedDur === newDur ? sp : Math.max(MIN_CLIP_SPEED, Math.min(MAX_CLIP_SPEED, sourceSpan / clampedDur));
       // No history here — like updateClip, the slider snapshots once on mousedown
       // so a whole speed drag collapses into a single undo entry.
       return {

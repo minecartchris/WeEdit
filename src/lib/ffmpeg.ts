@@ -51,6 +51,22 @@ export async function checkFfmpeg(): Promise<FfmpegCheck> {
 }
 
 /**
+ * Actually tries to encode a frame with h264_nvenc rather than just checking
+ * whether ffmpeg was compiled with NVENC support — a machine can have that
+ * and still lack a GPU/driver that can run it, which is the failure this
+ * guards against. Used to avoid defaulting exports to a codec that can't
+ * actually run on this machine. Resolves to false (never throws) on any
+ * failure, since "not available" is exactly the informative result here.
+ */
+export async function checkNvenc(): Promise<boolean> {
+  try {
+    return await invoke<boolean>("ffmpeg_nvenc_available", { customPath: customPath() });
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Returns the audio streams found in a media file via ffprobe. Throws if
  * ffprobe isn't installed — caller should fall back to assuming single-track.
  */

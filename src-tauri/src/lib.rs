@@ -373,6 +373,44 @@ fn find_ffmpeg_binary(name: &str, custom: Option<&str>) -> Option<String> {
 
 const FFMPEG_INSTALL_HINT: &str = "ffmpeg not found. Install via `winget install ffmpeg` and restart WeEdit, or use the Locate button to point WeEdit at ffmpeg.exe.";
 
+/// Actually tries to encode one tiny frame with h264_nvenc, rather than just
+/// checking `ffmpeg -encoders` for the name. Listing encoders only tells us
+/// ffmpeg was *built* with NVENC support — it says nothing about whether this
+/// machine has an NVIDIA GPU/driver new enough to run it. That distinction
+/// matters: without it, WeEdit defaulted every export (every preset, and
+/// Custom) to h264_nvenc, so on any machine without working NVENC every
+/// single export failed identically no matter what the user picked.
+#[tauri::command]
+async fn ffmpeg_nvenc_available(custom_path: Option<String>) -> Result<bool, String> {
+    run_blocking("ffmpeg_nvenc_available", move || {
+        let bin = match find_ffmpeg_binary("ffmpeg", custom_path.as_deref()) {
+            Some(b) => b,
+            None => return Ok(false),
+        };
+        let output = command(&bin)
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "nullsrc=s=64x64:d=0.1",
+                "-frames:v",
+                "1",
+                "-c:v",
+                "h264_nvenc",
+                "-f",
+                "null",
+                "-",
+            ])
+            .output()
+            .map_err(|e| format!("Failed to run ffmpeg: {e}"))?;
+        Ok(output.status.success())
+    })
+    .await
+}
+
 #[tauri::command]
 async fn ffmpeg_check(custom_path: Option<String>) -> Result<String, String> {
     run_blocking("ffmpeg_check", move || {
@@ -1293,6 +1331,7 @@ pub fn run() {
             ffprobe_audio_streams,
             ffmpeg_extract_audio_tracks,
             ffmpeg_check,
+            ffmpeg_nvenc_available,
             ffmpeg_run,
             ffmpeg_cancel,
         ])

@@ -128,6 +128,34 @@ export function compileExport(input: ExportInputs, opts: ExportOptions): Compile
       Math.abs(rotationDeg) > 1e-3
         ? `,rotate=${rotationRad.toFixed(6)}:c=black@0:ow=rotw(${rotationRad.toFixed(6)}):oh=roth(${rotationRad.toFixed(6)})`
         : "";
+    // Opacity. `colorchannelmixer` has no yuva420p path, so leaving it in the
+    // chain made ffmpeg convert every clip frame to argb and back around it —
+    // an unaccelerated swscale round trip per frame per clip, on frames that
+    // are 60% bigger in argb than in yuva420p. `lut` scales the alpha plane
+    // in place instead (identical result to within rounding), and a clip at
+    // full opacity needs no filter at all — which is what the graph emitted
+    // `colorchannelmixer=aa=1.000` for, paying the whole round trip for a
+    // no-op.
+    const opacityFilter = clip.opacity < 0.999 ? `,lut=a=val*${clip.opacity.toFixed(3)}` : "";
+
+    // Timeline placement. The obvious way to move a clip to its start time is
+    // `setpts=PTS+start/TB`, but that leaves the overlay's second input with no
+    // frames at all for the clip's first `startSec` seconds — and every overlay
+    // in the chain then holds on to the composite frames it has already
+    // produced while it waits for that first frame to arrive. Down a stack of
+    // overlays those held frames pile up fast: a 20s / 4-clip 1080x1920 graph
+    // peaked at ~8.7 GB, and a real Shorts project died on ffmpeg's -12
+    // (ENOMEM) without ever emitting frame 0. Padding each clip's head with
+    // transparent frames instead keeps every overlay fed from t=0, so nothing
+    // queues — byte-identical output for ~13x less memory. `fps` goes first
+    // because tpad derives the pad length from the link's frame rate, which
+    // reads as 0 for sources that don't declare one (the pad would then be
+    // silently dropped and the clip would render from t=0).
+    const delayFilter =
+      clip.startSec > 0.001
+        ? `,fps=${opts.fps},tpad=start_duration=${clip.startSec.toFixed(3)}:start_mode=add:color=black@0`
+        : "";
+
     const xPct = clip.xPct ?? 50;
     const yPct = clip.yPct ?? 50;
     const overlayX = `(main_w*${(xPct / 100).toFixed(4)})-(overlay_w/2)`;
@@ -137,10 +165,8 @@ export function compileExport(input: ExportInputs, opts: ExportOptions): Compile
       `${head}${cropFilter ? `,${cropFilter}` : ""},setpts=(PTS-STARTPTS)/${speed.toFixed(6)},` +
         `scale=${opts.width}:${opts.height}:force_original_aspect_ratio=decrease,` +
         `pad=${opts.width}:${opts.height}:(ow-iw)/2:(oh-ih)/2:color=black@0,` +
-        `format=yuva420p,` +
-        `colorchannelmixer=aa=${clip.opacity.toFixed(3)}` +
-        `${zoomFilter}${rotateFilter},` +
-        `setpts=PTS+${clip.startSec.toFixed(3)}/TB` +
+        `format=yuva420p` +
+        `${opacityFilter}${zoomFilter}${rotateFilter}${delayFilter}` +
         `[${prepared}]`,
     );
 
@@ -219,6 +245,43 @@ export function compileExport(input: ExportInputs, opts: ExportOptions): Compile
 
 // ── Audio compiler ──
 
+// Every clip chain is normalised to this before it is placed and mixed:
+// `concat` needs both of its sides in one format, and `amix` needs all of its
+// inputs to agree. 48 kHz is what the speed filter below already assumes (the
+// norm for screen / Twitch captures). `rematrix_volume` cancels swresample's
+// power-preserving -3 dB mono→stereo gain so a mono source (a mic track, most
+// often) keeps the level it had back when the mix stayed mono; it does nothing
+// to a stereo source, and only a surround one — which nothing in this app's
+// world produces — would come out 3 dB hot.
+const AUDIO_RATE = 48000;
+const AUDIO_FORMAT = `aresample=${AUDIO_RATE}:ochl=stereo:osf=fltp:rematrix_volume=1.414214`;
+
+/**
+ * Moves a finished clip-audio chain to its place on the timeline, returning the
+ * label to mix. `adelay` is the obvious filter for this, but it emits nothing
+ * until its own first input frame arrives — and `amix` downstream cannot output
+ * a single sample until *every* branch has handed it a frame. So one clip whose
+ * audio sits late in a long source stalls the entire mix at t=0 while the video
+ * composite runs ahead unthrottled, queueing the whole timeline's frames: an
+ * 8-clip / 40s 1080x1920 export peaked at ~10 GB on that alone, and real
+ * projects hit ffmpeg's -12 (ENOMEM). Concatenating onto a silent head instead
+ * hands amix something from every branch immediately, so the graph advances in
+ * timeline order and nothing queues (~770 MB for the same export).
+ */
+function placeOnTimeline(
+  parts: string[],
+  srcLabel: string,
+  startSec: number,
+  next: (p: string) => string,
+): string {
+  if (startSec <= 0.0005) return srcLabel;
+  const silence = next("asil");
+  const placed = next("apl");
+  parts.push(`anullsrc=r=${AUDIO_RATE}:cl=stereo:d=${startSec.toFixed(3)}[${silence}]`);
+  parts.push(`[${silence}][${srcLabel}]concat=n=2:v=0:a=1[${placed}]`);
+  return placed;
+}
+
 interface AudioCompileCtx {
   tracks: Track[];
   clips: Record<string, Clip>;
@@ -245,8 +308,7 @@ function compileAudio(ctx: AudioCompileCtx): string | null {
     const effVolume = mc.volume * (track?.volume ?? 1);
     if (effVolume <= 0) continue;
 
-    const delayMs = Math.max(0, Math.round(mc.startSec * 1000));
-    const adelay = `adelay=${delayMs}|${delayMs}`;
+    const startSec = Math.max(0, mc.startSec);
     // Speed: trim `durationSec * speed` of source, then retime to durationSec.
     // Pitch preserved → atempo (sample-rate agnostic); pitch follows → asetrate
     // (tape effect; assumes 48 kHz, the norm for screen/Twitch captures).
@@ -257,7 +319,7 @@ function compileAudio(ctx: AudioCompileCtx): string | null {
         ? ""
         : pitchPreserved
         ? atempoChain(speed)
-        : `asetrate=${Math.round(48000 * speed)},aresample=48000`;
+        : `asetrate=${Math.round(AUDIO_RATE * speed)},aresample=${AUDIO_RATE}`;
     const trim =
       `atrim=start=${mc.sourceInSec.toFixed(3)}:duration=${(mc.durationSec * speed).toFixed(3)},asetpts=PTS-STARTPTS` +
       (speedFilter ? `,${speedFilter}` : "");
@@ -269,8 +331,8 @@ function compileAudio(ctx: AudioCompileCtx): string | null {
       const inputIdx = mediaSrcInput.get(m.id);
       if (inputIdx === undefined) continue;
       const out = next("ac");
-      parts.push(`[${inputIdx}:a]${trim},${adelay},${volume}[${out}]`);
-      audioOutLabels.push(`[${out}]`);
+      parts.push(`[${inputIdx}:a]${trim},${volume},${AUDIO_FORMAT}[${out}]`);
+      audioOutLabels.push(`[${placeOnTimeline(parts, out, startSec, next)}]`);
       continue;
     }
 
@@ -300,15 +362,15 @@ function compileAudio(ctx: AudioCompileCtx): string | null {
         );
       }
       const out = next("af");
-      parts.push(`[${mixedLabel}]${adelay},${volume}[${out}]`);
-      audioOutLabels.push(`[${out}]`);
+      parts.push(`[${mixedLabel}]${volume},${AUDIO_FORMAT}[${out}]`);
+      audioOutLabels.push(`[${placeOnTimeline(parts, out, startSec, next)}]`);
     } else {
       // Single-track muxed audio from the video file itself
       const inputIdx = mediaSrcInput.get(m.id);
       if (inputIdx === undefined) continue;
       const out = next("ac");
-      parts.push(`[${inputIdx}:a]${trim},${adelay},${volume}[${out}]`);
-      audioOutLabels.push(`[${out}]`);
+      parts.push(`[${inputIdx}:a]${trim},${volume},${AUDIO_FORMAT}[${out}]`);
+      audioOutLabels.push(`[${placeOnTimeline(parts, out, startSec, next)}]`);
     }
   }
 

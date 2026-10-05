@@ -345,6 +345,10 @@ function ImageLayer({
 
 function TextLayer({ clip, playheadSec }: { clip: TextClip; playheadSec: number }) {
   const tf = resolveTransform(clip, playheadSec);
+  // fontSizePx is authored against the project frame height (export scales it by
+  // outputHeight / project.height), so size it in stage-relative cqh units —
+  // otherwise the text stays a fixed pixel size while the preview resizes.
+  const projectHeight = useEditor((s) => s.project.height);
   return (
     <div
       data-cliplayer={clip.id}
@@ -355,7 +359,7 @@ function TextLayer({ clip, playheadSec }: { clip: TextClip; playheadSec: number 
         transform: `perspective(1200px) translate(-50%, -50%) rotateX(${tf.tilt}deg) rotateZ(${tf.rotation}deg) scale(${tf.scale})`,
         transformOrigin: "center",
         fontFamily: clip.fontFamily,
-        fontSize: `${clip.fontSizePx}px`,
+        fontSize: `${(clip.fontSizePx / Math.max(1, projectHeight)) * 100}cqh`,
         color: clip.color,
         textShadow: "0 2px 12px rgba(0,0,0,0.55)",
         pointerEvents: "none",
@@ -615,6 +619,9 @@ function StageFrame({
         aspectRatio: `${w} / ${h}`,
         width: `min(100cqw, calc(100cqh * ${w} / ${h}))`,
         height: `min(100cqh, calc(100cqw * ${h} / ${w}))`,
+        // Make the stage itself a size container so layers can size in cqw/cqh
+        // relative to the rendered frame (text scales with the preview).
+        containerType: "size",
       }}
     >
       {children}

@@ -1,4 +1,4 @@
-import { AudioLines, Music, Pencil, Scissors, Trash2 } from "lucide-react";
+import { AudioLines, FolderSearch, Music, Pencil, Scissors, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ContextMenu, ContextMenuItem } from "@/components/ui/ContextMenu";
 import {
@@ -11,6 +11,8 @@ import {
 } from "@/lib/clips";
 import { useEditor } from "@/state/editor";
 import { useWaveform } from "@/lib/waveform";
+import { replaceMediaFile } from "@/lib/relink";
+import { useIsMediaMissing } from "@/state/missingMedia";
 import type { Clip, MediaClip, MediaItem, TextClip } from "@/types";
 
 interface ClipBlockProps {
@@ -42,6 +44,7 @@ export function ClipBlock({ clip, pxPerSec }: ClipBlockProps) {
     clip.kind !== "text"
       ? media.find((m) => m.id === (clip as MediaClip).mediaId)
       : undefined;
+  const missing = useIsMediaMissing(sourceMedia?.id);
 
   const collectAnchors = useCallback((): number[] => {
     const all = Object.values(allClips);
@@ -227,8 +230,10 @@ export function ClipBlock({ clip, pxPerSec }: ClipBlockProps) {
     <div
       className={[
         "absolute top-1 bottom-1 rounded-md overflow-hidden flex select-none",
-        isSelected ? "ring-2 ring-we-teal z-10" : "ring-1 ring-we-border",
-        clip.kind === "audio"
+        isSelected ? "ring-2 ring-we-teal z-10" : missing ? "ring-1 ring-red-500" : "ring-1 ring-we-border",
+        missing
+          ? "bg-red-200"
+          : clip.kind === "audio"
           ? "bg-emerald-100"
           : clip.kind === "text"
           ? "bg-amber-100"
@@ -241,7 +246,11 @@ export function ClipBlock({ clip, pxPerSec }: ClipBlockProps) {
       onClick={(e) => e.stopPropagation()}
       onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
-      title={renderClipTitle(clip, sourceMedia)}
+      title={
+        missing && sourceMedia
+          ? `Media offline — ${sourceMedia.name} was moved or deleted. Right-click → Replace file… to relink it.`
+          : renderClipTitle(clip, sourceMedia)
+      }
     >
       <div
         onPointerDown={onTrimPointerDown("left")}
@@ -285,6 +294,20 @@ export function ClipBlock({ clip, pxPerSec }: ClipBlockProps) {
           >
             Split here
           </ContextMenuItem>
+          {missing && sourceMedia && (
+            <ContextMenuItem
+              icon={FolderSearch}
+              onSelect={() => {
+                void replaceMediaFile(sourceMedia)
+                  .then((err) => {
+                    if (err) window.alert(err);
+                  })
+                  .catch((e) => console.warn("Replace file failed", e));
+              }}
+            >
+              Replace file…
+            </ContextMenuItem>
+          )}
           {clip.kind === "video" && (
             <ContextMenuItem icon={AudioLines} onSelect={() => detachAudio(clip.id)}>
               Detach audio

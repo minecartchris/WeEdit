@@ -37,6 +37,11 @@ function isWaveformSafe(media: MediaItem): boolean {
 }
 
 const cache = new Map<string, WaveformData>();
+
+/** Drops cached peaks for a media item (e.g. after its file was replaced). */
+export function invalidateWaveform(mediaId: string): void {
+  cache.delete(mediaId);
+}
 const inFlight = new Map<string, Promise<WaveformData | null>>();
 
 function computePeaks(buffer: AudioBuffer): WaveformData {

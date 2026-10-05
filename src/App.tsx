@@ -11,6 +11,7 @@ import { Splitter } from "@/components/ui/Splitter";
 import { useAutoSave } from "@/hooks/useAutoSave";
 import { usePlayback } from "@/hooks/usePlayback";
 import { useShortcuts } from "@/hooks/useShortcuts";
+import { useMissingMediaWatcher } from "@/state/missingMedia";
 import { useIntegrations } from "@/state/integrations";
 import { useLibrary } from "@/state/library";
 import { usePrefs } from "@/state/prefs";
@@ -19,6 +20,7 @@ export default function App() {
   useShortcuts();
   useAutoSave();
   usePlayback();
+  useMissingMediaWatcher();
 
   const loadIntegrations = useIntegrations((s) => s.load);
   const loadPrefs = usePrefs((s) => s.load);

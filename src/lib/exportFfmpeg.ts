@@ -76,7 +76,7 @@ export function compileExport(input: ExportInputs, opts: ExportOptions): Compile
     if (!m) continue;
     ensureSrcInput(m);
     if (m.kind === "video" && m.audioTracks && m.audioTracks.length > 0) {
-      for (const t of m.audioTracks) if (!t.muted) ensureTrackInput(m, t);
+      for (const t of m.audioTracks) if (!t.muted && t.filepath) ensureTrackInput(m, t);
     }
   }
 
@@ -338,8 +338,9 @@ function compileAudio(ctx: AudioCompileCtx): string | null {
 
     // m.kind === "video"
     if (m.audioTracks && m.audioTracks.length > 0) {
-      const live = m.audioTracks.filter((t) => !t.muted);
-      if (live.length === 0) continue; // all tracks muted on this media
+      const clipMuted = mc.mutedTracks ?? [];
+      const live = m.audioTracks.filter((t) => !t.muted && t.filepath && !clipMuted.includes(t.index));
+      if (live.length === 0) continue; // all tracks muted on this clip/media
 
       const perTrack: string[] = [];
       for (const t of live) {

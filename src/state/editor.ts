@@ -100,6 +100,9 @@ interface EditorState {
   setLibraryFilter: (key: LibraryFilter) => void;
   addMedia: (item: MediaItem) => void;
   removeMedia: (id: string) => void;
+  /** Point an existing media item at a re-imported file (same id, so every
+   *  clip that uses it follows). Used by "Replace file…" for moved media. */
+  relinkMedia: (id: string, next: MediaItem) => void;
   setMediaAudioTrackMuted: (mediaId: string, trackIndex: number, muted: boolean) => void;
 
   // ── Project
@@ -257,6 +260,25 @@ export const useEditor = create<EditorState>((set, get) => ({
     set((s) =>
       withHistory(s, {
         media: s.media.filter((m) => m.id !== id),
+      }),
+    ),
+  relinkMedia: (id, next) =>
+    set((s) =>
+      withHistory(s, {
+        media: s.media.map((m) =>
+          m.id === id
+            ? {
+                ...next,
+                id,
+                importedAt: m.importedAt,
+                // Media-level mute flags survive the relink, matched by stream index.
+                audioTracks: next.audioTracks?.map((t) => ({
+                  ...t,
+                  muted: m.audioTracks?.find((o) => o.index === t.index)?.muted ?? t.muted,
+                })),
+              }
+            : m,
+        ),
       }),
     ),
   setMediaAudioTrackMuted: (mediaId, trackIndex, muted) =>

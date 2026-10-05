@@ -36,6 +36,22 @@ export async function pickMediaFiles(): Promise<string[]> {
   return Array.isArray(result) ? result : [result];
 }
 
+/** File picker for relinking a moved/deleted media item: opens in the folder the
+ *  file used to live in, filtered to its media kind. Tauri only. */
+export async function pickReplacementFile(item: MediaItem): Promise<string | null> {
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const exts = item.kind === "video" ? VIDEO_EXT : item.kind === "image" ? IMAGE_EXT : AUDIO_EXT;
+  const oldDir = item.src.replace(/[\\/][^\\/]*$/, "");
+  const result = await open({
+    multiple: false,
+    title: `Replace "${item.name}"`,
+    defaultPath: oldDir || undefined,
+    filters: [{ name: item.kind[0].toUpperCase() + item.kind.slice(1), extensions: exts }],
+  });
+  if (!result) return null;
+  return Array.isArray(result) ? result[0] ?? null : result;
+}
+
 let _convertFileSrc: ((path: string) => string) | null = null;
 
 /**
@@ -95,12 +111,14 @@ export async function importFile(file: File): Promise<MediaItem | null> {
  *   extracts each to its own file so PreviewStage can mute them individually.
  *   ffmpeg/ffprobe are best-effort — missing binaries means single-track only.
  */
-export async function importPath(path: string): Promise<MediaItem | null> {
+export async function importPath(path: string, existingId?: string): Promise<MediaItem | null> {
   const name = basename(path);
   const kind = classifyByExt(name);
   if (!kind) return null;
 
-  const id = crypto.randomUUID();
+  // `existingId` re-imports a file into an existing media item (relinking a
+  // moved file), so every clip that references it keeps working.
+  const id = existingId ?? crypto.randomUUID();
   const { convertFileSrc } = await import("@tauri-apps/api/core");
   const url = convertFileSrc(path);
 

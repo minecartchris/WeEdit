@@ -20,6 +20,8 @@ import { Menu, MenuItem, MenuLabel, MenuSeparator } from "@/components/ui/Menu";
 import { isMediaCompatibleWithTrack, makeClipFromMedia } from "@/lib/clips";
 import { startMediaDrag } from "@/lib/customDrag";
 import { importFile, importPath, pickMediaFiles, pickMediaFilesWeb } from "@/lib/media";
+import { replaceMediaFile } from "@/lib/relink";
+import { useIsMediaMissing } from "@/state/missingMedia";
 import { isWeb } from "@/lib/platform";
 import { formatDuration, useEditor } from "@/state/editor";
 import type { LibraryFilter, MediaItem } from "@/types";
@@ -274,7 +276,13 @@ export function MediaLibrary() {
           }
         }}
       >
-        <LibraryView tab={tab} items={visible} dragOver={dragOver} onPick={() => handleAddMedia("device")} />
+        <LibraryView
+          tab={tab}
+          items={visible}
+          dragOver={dragOver}
+          onPick={() => handleAddMedia("device")}
+          onError={setError}
+        />
       </div>
     </section>
   );
@@ -285,11 +293,13 @@ function LibraryView({
   items,
   dragOver,
   onPick,
+  onError,
 }: {
   tab: MediaTab;
   items: MediaItem[];
   dragOver: boolean;
   onPick: () => void;
+  onError: (msg: string | null) => void;
 }) {
   // Stub tabs that don't have a media list yet
   if (tab === "uploads" || tab === "exports") {
@@ -306,14 +316,26 @@ function LibraryView({
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
       {items.map((m) => (
-        <MediaCard key={m.id} item={m} />
+        <MediaCard key={m.id} item={m} onError={onError} />
       ))}
     </div>
   );
 }
 
-function MediaCard({ item }: { item: MediaItem }) {
+function MediaCard({ item, onError }: { item: MediaItem; onError: (msg: string | null) => void }) {
   const removeMedia = useEditor((s) => s.removeMedia);
+  const missing = useIsMediaMissing(item.id);
+
+  const replaceFile = async () => {
+    onError(null);
+    try {
+      const err = await replaceMediaFile(item);
+      if (err) onError(err);
+    } catch (e) {
+      console.warn("Replace file failed", e);
+      onError(`Couldn't replace ${item.name}`);
+    }
+  };
 
   const addToTimeline = () => {
     const state = useEditor.getState();
@@ -327,8 +349,15 @@ function MediaCard({ item }: { item: MediaItem }) {
 
   return (
     <div
-      className="group select-none rounded-lg border border-we-border overflow-hidden bg-we-panel hover:shadow-md transition-shadow cursor-grab active:cursor-grabbing"
-      title={`${item.name} — drag to a track, or double-click to add at playhead`}
+      className={[
+        "group select-none rounded-lg border overflow-hidden bg-we-panel hover:shadow-md transition-shadow cursor-grab active:cursor-grabbing",
+        missing ? "border-red-500 ring-1 ring-red-500" : "border-we-border",
+      ].join(" ")}
+      title={
+        missing
+          ? `${item.name} — file not found at ${item.src}. Click "Replace file…" to locate it.`
+          : `${item.name} — drag to a track, or double-click to add at playhead`
+      }
       onMouseDown={(e) => startMediaDrag(e, item)}
       onDoubleClick={addToTimeline}
     >
@@ -359,8 +388,30 @@ function MediaCard({ item }: { item: MediaItem }) {
         >
           Remove
         </button>
+        {missing && (
+          <div className="absolute inset-0 bg-red-900/60 flex flex-col items-center justify-center gap-1.5">
+            <span className="px-1.5 py-0.5 rounded bg-red-600 text-white text-[10px] font-semibold uppercase tracking-wide">
+              Media offline
+            </span>
+            <button
+              onMouseDown={(e) => e.stopPropagation()}
+              onDoubleClick={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                void replaceFile();
+              }}
+              draggable={false}
+              className="pointer-events-auto px-2 py-0.5 rounded text-[11px] bg-white text-red-700 font-medium hover:bg-red-50"
+              title="Locate the moved file and relink every clip that uses it"
+            >
+              Replace file…
+            </button>
+          </div>
+        )}
       </div>
-      <div className="px-2 py-1.5 text-xs text-we-ink truncate">{item.name}</div>
+      <div className={["px-2 py-1.5 text-xs truncate", missing ? "text-red-600" : "text-we-ink"].join(" ")}>
+        {item.name}
+      </div>
     </div>
   );
 }

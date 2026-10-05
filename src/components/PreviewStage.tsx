@@ -397,7 +397,35 @@ interface ActiveAudio {
   volume: number;
 }
 
-function AudioLayer({
+function AudioLayer(props: ActiveAudio & { isPlaying: boolean; playheadSec: number }) {
+  const { clip, media, volume, isPlaying, playheadSec } = props;
+  // Detached audio from a multi-stream video: an <audio> element on the muxed
+  // file only plays its default stream, so the other streams went silent and
+  // couldn't be muted individually. Play every extracted stream instead, each
+  // honoring this clip's per-track mute.
+  const tracks = (media.audioTracks ?? []).filter((t) => t.filepath);
+  if (tracks.length > 0) {
+    const mutedTracks = clip.mutedTracks ?? [];
+    return (
+      <>
+        {tracks.map((t) => (
+          <ExtractedAudioTrack
+            key={t.index}
+            track={t}
+            clip={clip}
+            muted={mutedTracks.includes(t.index)}
+            isPlaying={isPlaying}
+            playheadSec={playheadSec}
+            trackVolume={volume}
+          />
+        ))}
+      </>
+    );
+  }
+  return <MuxedAudioLayer {...props} />;
+}
+
+function MuxedAudioLayer({
   clip,
   media,
   volume,

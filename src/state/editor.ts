@@ -583,6 +583,11 @@ export const useEditor = create<EditorState>((set, get) => ({
         mediaId: clip.mediaId,
         opacity: 1,
         volume: clip.volume > 0 ? clip.volume : 1,
+        // Keep the source timing and per-stream mutes so the detached audio
+        // stays in sync and still exposes every audio track of the source.
+        speed: clip.speed,
+        pitchPreserved: clip.pitchPreserved,
+        mutedTracks: clip.mutedTracks,
         xPct: 50,
         yPct: 50,
         scale: 1,

@@ -595,28 +595,44 @@ fn ffmpeg_extract_audio_tracks_blocking(
 
     fs::create_dir_all(&output_dir).map_err(|e| format!("mkdir failed: {e}"))?;
 
-    let mut results = Vec::with_capacity(track_count);
-    for i in 0..track_count {
-        // Pick an extension based on codec by probing per-stream? Too much for
-        // an MVP — `.m4a` container handles AAC/Opus/MP3/etc via stream copy.
-        let out_path = format!("{output_dir}/track-{i}.m4a");
+    let run = |i: usize, out_path: &str, codec_args: &[&str]| -> Result<bool, String> {
+        let map = format!("0:a:{i}");
+        let mut args: Vec<&str> = vec![
+            "-y", // overwrite
+            "-hide_banner",
+            "-loglevel", "error",
+            "-i", &source_path,
+            "-map", &map,
+        ];
+        args.extend_from_slice(codec_args);
+        args.push(out_path);
         let output = command(&bin)
-            .args([
-                "-y",                 // overwrite
-                "-hide_banner",
-                "-loglevel", "error",
-                "-i", &source_path,
-                "-map", &format!("0:a:{i}"),
-                "-c", "copy",
-                &out_path,
-            ])
+            .args(&args)
             .output()
             .map_err(|e| format!("Failed to run ffmpeg: {e}"))?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("ffmpeg extract track {i} failed: {}", stderr.trim()));
+            eprintln!("ffmpeg extract track {i} ({codec_args:?}) failed: {}", stderr.trim());
         }
-        results.push(ExtractedTrack { index: i, filepath: out_path });
+        Ok(output.status.success())
+    };
+
+    let mut results = Vec::with_capacity(track_count);
+    for i in 0..track_count {
+        let out_path = format!("{output_dir}/track-{i}.m4a");
+        // Stream copy is lossless and fast, but `.m4a` can't hold every codec
+        // (PCM, FLAC-in-MKV, Vorbis…). When the copy fails, transcode that one
+        // stream to AAC instead of giving up — previously a single failing
+        // stream aborted extraction and the clip lost its per-track controls.
+        let ok = run(i, &out_path, &["-c", "copy"])?
+            || run(i, &out_path, &["-c:a", "aac", "-b:a", "192k"])?;
+        // Keep going on failure so the remaining streams still get extracted;
+        // an empty filepath marks the stream as unavailable to callers.
+        let filepath = if ok { out_path } else { String::new() };
+        results.push(ExtractedTrack { index: i, filepath });
+    }
+    if results.iter().all(|t| t.filepath.is_empty()) {
+        return Err("ffmpeg failed to extract any audio track".to_string());
     }
     Ok(results)
 }

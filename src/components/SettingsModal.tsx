@@ -19,6 +19,7 @@ export function SettingsModal({ open, onClose }: Props) {
       <div className="p-5 flex flex-col gap-7">
         <AppearanceSection />
         <EditorSection />
+        <TimelineSection />
         <AutosaveSection />
         <ShortcutsSection />
       </div>
@@ -265,6 +266,24 @@ function AutosaveSection() {
             disabled={!autosave.versionsEnabled}
             onCommit={(versionIntervalMin) => setAutosave({ versionIntervalMin })}
           />
+        </Row>
+      </div>
+    </Section>
+  );
+}
+
+function TimelineSection() {
+  const zoomToPlayhead = usePrefs((s) => s.zoomToPlayhead);
+  const setZoomToPlayhead = usePrefs((s) => s.setZoomToPlayhead);
+
+  return (
+    <Section title="Timeline">
+      <div className="flex flex-col divide-y divide-we-border rounded-lg border border-we-border overflow-hidden">
+        <Row
+          label="Zoom to playhead"
+          hint="Alt+scroll and the zoom slider keep the playhead in place. Off: Alt+scroll zooms on the mouse pointer."
+        >
+          <Toggle on={zoomToPlayhead} onChange={setZoomToPlayhead} />
         </Row>
       </div>
     </Section>

@@ -24,6 +24,7 @@ import { Menu, MenuItem, MenuLabel, MenuSeparator } from "@/components/ui/Menu";
 import { MAX_VOLUME } from "@/lib/audioGain";
 import { isMediaCompatibleWithTrack } from "@/lib/clips";
 import { formatTimecode, useEditor } from "@/state/editor";
+import { usePrefs } from "@/state/prefs";
 import type { Clip, Track, TrackKind } from "@/types";
 
 // Bottom panel: editor toolbar + time ruler + track list. Phase 1.5 wires up
@@ -110,6 +111,35 @@ export function Timeline() {
     }
   }, [totalSec, pxPerSec, fitToWindow]);
 
+  // Zoom to `nextPx` keeping one point of the timeline fixed on screen. With
+  // the "zoom to playhead" pref on, that point is the playhead (pulled into
+  // view if it's off-screen); otherwise it's `viewportX` (the mouse pointer
+  // for Alt+wheel) or, failing that, the middle of the visible lanes.
+  const zoomAnchored = useCallback((nextPx: number, viewportX?: number) => {
+    const el = scrollContainerRef.current;
+    const { pxPerSec: cur, playheadSec: ph, setZoom: zoom } = useEditor.getState();
+    if (!el || cur <= 0) {
+      zoom(nextPx);
+      return;
+    }
+    let anchorX: number;
+    let anchorSec: number;
+    if (usePrefs.getState().zoomToPlayhead) {
+      anchorSec = ph;
+      const shownAt = TRACK_HEADER_PX + ph * cur - el.scrollLeft;
+      anchorX = Math.max(TRACK_HEADER_PX, Math.min(el.clientWidth, shownAt));
+    } else {
+      anchorX = viewportX ?? TRACK_HEADER_PX + (el.clientWidth - TRACK_HEADER_PX) / 2;
+      anchorSec = Math.max(0, (anchorX + el.scrollLeft - TRACK_HEADER_PX) / cur);
+    }
+    zoom(nextPx);
+    const next = useEditor.getState().pxPerSec;
+    // Re-anchor after the DOM reflows to the new width.
+    requestAnimationFrame(() => {
+      el.scrollLeft = TRACK_HEADER_PX + anchorSec * next - anchorX;
+    });
+  }, []);
+
   // Alt+wheel zooms the timeline; middle-mouse-drag pans it. Bound natively so
   // the wheel listener can be non-passive (preventDefault) and so we can stop
   // the browser's middle-click autoscroll.
@@ -120,18 +150,11 @@ export function Timeline() {
     const onWheel = (e: WheelEvent) => {
       if (!e.altKey) return;
       e.preventDefault();
-      const { pxPerSec: cur, setZoom: zoom } = useEditor.getState();
-      // Keep the time under the cursor fixed across the zoom so the content
-      // doesn't jump (which reads as a flash). Lanes start after the header.
+      const cur = useEditor.getState().pxPerSec;
+      // Keep the time under the cursor (or the playhead) fixed across the zoom
+      // so the content doesn't jump (which reads as a flash).
       const rect = el.getBoundingClientRect();
-      const cursorContentX = e.clientX - rect.left + el.scrollLeft - TRACK_HEADER_PX;
-      const timeAtCursor = cur > 0 ? cursorContentX / cur : 0;
-      zoom(cur * (e.deltaY < 0 ? 1.12 : 1 / 1.12));
-      const next = useEditor.getState().pxPerSec;
-      // Re-anchor after the DOM reflows to the new width.
-      requestAnimationFrame(() => {
-        el.scrollLeft = TRACK_HEADER_PX + timeAtCursor * next - (e.clientX - rect.left);
-      });
+      zoomAnchored(cur * (e.deltaY < 0 ? 1.12 : 1 / 1.12), e.clientX - rect.left);
     };
 
     let panning = false;
@@ -168,14 +191,14 @@ export function Timeline() {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     };
-  }, []);
+  }, [zoomAnchored]);
 
   return (
     <section className="flex-1 w-full flex flex-col min-h-0 h-full bg-we-panel border-t border-we-border min-w-0 select-none">
       <TimelineToolbar
         timecode={`${totalDisplay} / ${totalLength}`}
         pxPerSec={pxPerSec}
-        onZoom={setZoom}
+        onZoom={zoomAnchored}
         onAddTrack={addTrack}
         onFit={fitToWindow}
       />
@@ -213,6 +236,9 @@ export function Timeline() {
     </section>
   );
 }
+
+const ZOOM_SLIDER_MIN = 0.1;
+const ZOOM_SLIDER_MAX = 50;
 
 function TimelineToolbar({
   timecode,
@@ -302,13 +328,15 @@ function TimelineToolbar({
           Fit
         </button>
         <Search className="w-4 h-4 text-we-muted" />
+        {/* Logarithmic so each notch zooms by the same ratio — a linear 0.1–50
+            range crams all the zoomed-out levels into the first few pixels. */}
         <input
           type="range"
-          min={0.1}
-          max={50}
-          step={0.1}
-          value={pxPerSec}
-          onChange={(e) => onZoom(parseFloat(e.target.value))}
+          min={Math.log(ZOOM_SLIDER_MIN)}
+          max={Math.log(ZOOM_SLIDER_MAX)}
+          step={0.01}
+          value={Math.log(Math.max(ZOOM_SLIDER_MIN, Math.min(ZOOM_SLIDER_MAX, pxPerSec)))}
+          onChange={(e) => onZoom(Math.exp(parseFloat(e.target.value)))}
           className="accent-we-teal w-32"
           aria-label="Timeline zoom"
         />

@@ -25,6 +25,7 @@ const DEFAULTS: UiPrefs = {
   customShortcuts: {},
   panelSizes: DEFAULT_PANEL_SIZES,
   autosave: DEFAULT_AUTOSAVE,
+  zoomToPlayhead: false,
 };
 
 interface PrefsState extends UiPrefs {
@@ -40,6 +41,7 @@ interface PrefsState extends UiPrefs {
   savePanelSizes: () => void;
   /** Patch autosave prefs and persist. */
   setAutosave: (patch: Partial<AutosavePrefs>) => void;
+  setZoomToPlayhead: (on: boolean) => void;
 }
 
 // Apply the theme to <html>: toggles the `dark` class Tailwind keys off and
@@ -88,6 +90,7 @@ export const usePrefs = create<PrefsState>((set, get) => ({
         customShortcuts: ui.customShortcuts ?? {},
         panelSizes: { ...DEFAULT_PANEL_SIZES, ...(ui.panelSizes ?? {}) },
         autosave: { ...DEFAULT_AUTOSAVE, ...(ui.autosave ?? {}) },
+        zoomToPlayhead: ui.zoomToPlayhead ?? DEFAULTS.zoomToPlayhead,
       };
       set({ ...merged, loaded: true });
       applyTheme(merged.theme);
@@ -128,4 +131,8 @@ export const usePrefs = create<PrefsState>((set, get) => ({
       void persist({ autosave });
       return { autosave };
     }),
+  setZoomToPlayhead: (zoomToPlayhead) => {
+    set({ zoomToPlayhead });
+    void persist({ zoomToPlayhead });
+  },
 }));

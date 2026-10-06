@@ -228,6 +228,9 @@ export interface UiPrefs {
   customShortcuts: Record<string, string>;
   panelSizes: PanelSizes;
   autosave: AutosavePrefs;
+  /** Timeline zoom (Alt+wheel and the zoom slider) anchors on the playhead
+   *  instead of the mouse pointer / view centre. */
+  zoomToPlayhead: boolean;
 }
 
 export interface ProjectMeta {

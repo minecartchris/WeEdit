@@ -798,6 +798,38 @@ async fn ffmpeg_run(
     .await
 }
 
+/// ffmpeg takes its filter graph on the command line, and Windows caps an
+/// entire command line at 32767 characters. A timeline whose clips carry
+/// keyframes compiles every animated transform field into a per-frame
+/// expression, so the graph reaches tens of kilobytes on a busy project and
+/// the spawn fails outright — before ffmpeg can report anything useful.
+/// `-filter_complex_script` reads the identical graph from a file, so hand it
+/// over once the graph is long enough to be worth the temp file.
+const FILTER_COMPLEX_INLINE_LIMIT: usize = 8000;
+
+/// Deletes its path on drop, so the temp graph file is cleaned up however the
+/// export ends — success, failure, or cancellation.
+struct TempFile(PathBuf);
+
+impl Drop for TempFile {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
+
+fn offload_filter_complex(args: &mut Vec<String>, export_id: &str) -> Option<PathBuf> {
+    let idx = args.iter().position(|a| a == "-filter_complex")?;
+    let graph = args.get(idx + 1)?.clone();
+    if graph.len() <= FILTER_COMPLEX_INLINE_LIMIT {
+        return None;
+    }
+    let path = std::env::temp_dir().join(format!("weedit-filtergraph-{export_id}.txt"));
+    fs::write(&path, graph.as_bytes()).ok()?;
+    args[idx] = "-filter_complex_script".to_string();
+    args[idx + 1] = path.to_string_lossy().into_owned();
+    Some(path)
+}
+
 fn ffmpeg_run_blocking(
     app: tauri::AppHandle,
     args: Vec<String>,
@@ -810,6 +842,9 @@ fn ffmpeg_run_blocking(
 
     // Append progress reporting.
     let mut full_args = args.clone();
+    // Held until this function returns, so the graph file outlives the ffmpeg
+    // process however the export ends.
+    let _filter_script = offload_filter_complex(&mut full_args, &export_id).map(TempFile);
     full_args.push("-progress".to_string());
     full_args.push("pipe:1".to_string());
 

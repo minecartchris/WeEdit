@@ -117,17 +117,19 @@ export function compileExport(input: ExportInputs, opts: ExportOptions): Compile
     // box at the default position), zoom by resizing that whole box, rotate it
     // (transparent fill so corners stay see-through), then let `overlay`'s x/y
     // expressions center the (possibly resized) box at (xPct%, yPct%) of the
-    // canvas. Keyframed animation isn't carried into the export — this uses
-    // each clip's base (non-keyframed) transform, same as the export's
-    // pre-existing (and still unanimated) handling of text position.
-    const scale = clip.scale ?? 1;
-    const rotationDeg = clip.rotation ?? 0;
-    const zoomFilter = Math.abs(scale - 1) > 1e-3 ? `,scale=iw*${scale.toFixed(4)}:ih*${scale.toFixed(4)}` : "";
-    const rotationRad = (rotationDeg * Math.PI) / 180;
-    const rotateFilter =
-      Math.abs(rotationDeg) > 1e-3
-        ? `,rotate=${rotationRad.toFixed(6)}:c=black@0:ow=rotw(${rotationRad.toFixed(6)}):oh=roth(${rotationRad.toFixed(6)})`
-        : "";
+    // canvas. Every field goes through `transformTrack`, so a keyframed clip
+    // animates here the way it does in the preview instead of silently
+    // falling back to the clip's (default) base transform. `tilt` is still
+    // dropped: the preview does it as a 3D rotateX under perspective, which
+    // ffmpeg's 2D filters have no equivalent for.
+    const scaleTrack = transformTrack(clip, "scale", 1);
+    const rotationTrack = transformTrack(clip, "rotation", 0);
+    const xTrack = transformTrack(clip, "xPct", 50);
+    const yTrack = transformTrack(clip, "yPct", 50);
+    // `t` inside these two filters is the clip's own stream time — the setpts
+    // above zeroes it — which is the base a keyframe's tSec is measured from.
+    const zoomFilter = zoomFilterFor(scaleTrack);
+    const rotateFilter = rotateFilterFor(rotationTrack);
     // Opacity. `colorchannelmixer` has no yuva420p path, so leaving it in the
     // chain made ffmpeg convert every clip frame to argb and back around it —
     // an unaccelerated swscale round trip per frame per clip, on frames that
@@ -156,10 +158,11 @@ export function compileExport(input: ExportInputs, opts: ExportOptions): Compile
         ? `,fps=${opts.fps},tpad=start_duration=${clip.startSec.toFixed(3)}:start_mode=add:color=black@0`
         : "";
 
-    const xPct = clip.xPct ?? 50;
-    const yPct = clip.yPct ?? 50;
-    const overlayX = `(main_w*${(xPct / 100).toFixed(4)})-(overlay_w/2)`;
-    const overlayY = `(main_h*${(yPct / 100).toFixed(4)})-(overlay_h/2)`;
+    // `overlay` is fed the composite, so its `t` is timeline time; shift it
+    // back to clip-relative time so it lines up with the keyframes.
+    const overlayTime = clipRelativeTime(clip.startSec);
+    const overlayX = `(main_w*${pctExpr(xTrack, overlayTime)})-(overlay_w/2)`;
+    const overlayY = `(main_h*${pctExpr(yTrack, overlayTime)})-(overlay_h/2)`;
 
     parts.push(
       `${head}${cropFilter ? `,${cropFilter}` : ""},setpts=(PTS-STARTPTS)/${speed.toFixed(6)},` +
@@ -185,16 +188,26 @@ export function compileExport(input: ExportInputs, opts: ExportOptions): Compile
   textClips.forEach((tc, i) => {
     const text = escapeDrawText(tc.text || " ");
     const colorArg = `${tc.color.replace(/^#/, "0x")}`;
-    const xExpr = `(w*${(tc.xPct / 100).toFixed(4)})-text_w/2`;
-    const yExpr = `(h*${(tc.yPct / 100).toFixed(4)})-text_h/2`;
+    // Text clips carry keyframes too, and hit the same bug; `drawtext`
+    // re-evaluates x/y every frame, so a keyframed text clip moves here too.
+    const textTime = clipRelativeTime(tc.startSec);
+    const xExpr = `(w*${pctExpr(transformTrack(tc, "xPct", 50), textTime)})-text_w/2`;
+    const yExpr = `(h*${pctExpr(transformTrack(tc, "yPct", 50), textTime)})-text_h/2`;
     // Zoom applies to text the same way it does to video/image clips (a
     // multiplier on rendered size). Rotation/tilt aren't supported for text —
     // ffmpeg's drawtext filter has no rotation parameter — so they're left
     // out of the export for now (this matches drawtext's own limitation, not
     // an oversight for video/image clips above).
+    // fontsize is fixed at filter init, so a text clip whose zoom is
+    // keyframed renders at its opening size rather than animating — the
+    // track's `initial` is that opening value.
     const fontsize = Math.max(
       8,
-      Math.round(tc.fontSizePx * (opts.height / Math.max(1, project.height)) * (tc.scale ?? 1)),
+      Math.round(
+        tc.fontSizePx *
+          (opts.height / Math.max(1, project.height)) *
+          transformTrack(tc, "scale", 1).initial,
+      ),
     );
     const fontPath = fontPathFor(tc.fontFamily);
     const newLabel = `txt${i + 1}`;
@@ -392,6 +405,117 @@ function compileAudio(ctx: AudioCompileCtx): string | null {
 // Percentages are trimmed off each edge of the *source* frame; each pair is
 // clamped so the remaining width/height never hits zero (or goes negative),
 // which ffmpeg would reject.
+/**
+ * One transform field (xPct / yPct / scale / rotation) across a clip's life,
+ * in the form the filter graph needs it: a constant when it never changes,
+ * otherwise an ffmpeg expression evaluated per frame.
+ *
+ * The preview draws every clip through `resolveTransform`, which interpolates
+ * the clip's keyframes. The export used to read the clip's base xPct/yPct/
+ * scale/rotation instead, and those two only agree while a clip has no
+ * keyframes: the moment it has any, `setTransformAtPlayhead` writes into the
+ * keyframe and leaves the base fields at their defaults. An image nudged into
+ * place after a keyframe existed therefore exported centered at full
+ * contain-fit size no matter where the preview showed it (#36). Reading the
+ * keyframes here keeps export and preview in step.
+ */
+interface TransformTrack {
+  /** The value, when it holds for the whole clip; null when it animates. */
+  constant: number | null;
+  /** The value at the clip's start — what a filter that can't animate gets. */
+  initial: number;
+  /** ffmpeg expression for the value at clip-relative time `timeExpr`. */
+  expr: (timeExpr: string) => string;
+  /** Largest magnitude the field reaches, for sizing the rotate canvas. */
+  peakAbs: number;
+}
+
+/** Below this, two transform values are the same value. */
+const TRANSFORM_EPSILON = 1e-4;
+
+function transformTrack(
+  clip: MediaClip | TextClip,
+  field: "xPct" | "yPct" | "scale" | "rotation",
+  fallback: number,
+): TransformTrack {
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : fallback);
+  const constantTrack = (v: number): TransformTrack => ({
+    constant: v,
+    initial: v,
+    expr: () => v.toFixed(4),
+    peakAbs: Math.abs(v),
+  });
+
+  const kfs = clip.keyframes;
+  if (!kfs || kfs.length === 0) return constantTrack(num(clip[field]));
+
+  const pts = kfs.map((k) => ({ t: k.tSec, v: num(k[field]) })).sort((a, b) => a.t - b.t);
+  const values = pts.map((p) => p.v);
+  if (Math.max(...values) - Math.min(...values) < TRANSFORM_EPSILON) return constantTrack(values[0]);
+
+  return {
+    constant: null,
+    initial: values[0],
+    // `resolveTransform` holds the first/last keyframe's value outside their
+    // range and interpolates linearly between them. `clip()` per segment
+    // reproduces the hold at both ends, and the nested `if`s select the
+    // segment the playhead is in.
+    expr: (timeExpr) => {
+      let out = values[values.length - 1].toFixed(4);
+      for (let i = pts.length - 2; i >= 0; i--) {
+        const a = pts[i];
+        const b = pts[i + 1];
+        const span = Math.max(1e-6, b.t - a.t);
+        const held = `clip(${timeExpr},${a.t.toFixed(3)},${b.t.toFixed(3)})`;
+        const seg = `(${a.v.toFixed(4)}+(${(b.v - a.v).toFixed(4)})*(${held}-${a.t.toFixed(3)})/${span.toFixed(6)})`;
+        out = `if(lt(${timeExpr},${b.t.toFixed(3)}),${seg},${out})`;
+      }
+      return out;
+    },
+    peakAbs: Math.max(...values.map((v) => Math.abs(v))),
+  };
+}
+
+/** Clip-relative time, for filters whose `t` is composite/timeline time. */
+function clipRelativeTime(startSec: number): string {
+  return startSec > 0.001 ? `(t-${startSec.toFixed(3)})` : "t";
+}
+
+/** A 0..100 percentage track as the 0..1 multiplier an x/y expression wants. */
+function pctExpr(track: TransformTrack, timeExpr: string): string {
+  if (track.constant !== null) return (track.constant / 100).toFixed(4);
+  return `((${track.expr(timeExpr)})/100)`;
+}
+
+/** Zoom: resizes the whole padded, stage-sized box about its center. */
+function zoomFilterFor(track: TransformTrack): string {
+  if (track.constant !== null) {
+    return Math.abs(track.constant - 1) > 1e-3
+      ? `,scale=iw*${track.constant.toFixed(4)}:ih*${track.constant.toFixed(4)}`
+      : "";
+  }
+  // `eval=frame` re-runs the expressions every frame. Both dimensions are
+  // rounded to even numbers because the clip is yuva420p by this point and
+  // chroma subsampling needs them divisible by 2.
+  const e = track.expr("t");
+  return `,scale=w='max(2,trunc(iw*(${e})/2)*2)':h='max(2,trunc(ih*(${e})/2)*2)':eval=frame`;
+}
+
+/** Rotation about the box's center, with transparent corners. */
+function rotateFilterFor(track: TransformTrack): string {
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  if (track.constant !== null) {
+    if (Math.abs(track.constant) <= 1e-3) return "";
+    const rad = toRad(track.constant).toFixed(6);
+    return `,rotate=${rad}:c=black@0:ow=rotw(${rad}):oh=roth(${rad})`;
+  }
+  // `rotate` already re-evaluates its angle per frame, but ow/oh are sized
+  // once — so size them for the widest angle the clip ever reaches, or the
+  // frame would be cropped at the extremes of the animation.
+  const peak = toRad(track.peakAbs).toFixed(6);
+  return `,rotate=a='(${track.expr("t")})*PI/180':c=black@0:ow=rotw(${peak}):oh=roth(${peak})`;
+}
+
 function cropFilterFor(crop: MediaClip["crop"] | undefined): string | null {
   if (!crop) return null;
   const clampPct = (v: number) => Math.max(0, Math.min(99, v || 0));

@@ -8,6 +8,7 @@ import {
   clampClipStart,
   isMediaCompatibleWithTrack,
   resolveTransform,
+  resolveVolume,
 } from "@/lib/clips";
 import type {
   AspectRatio,
@@ -21,6 +22,7 @@ import type {
   Track,
   TrackKind,
   Transform,
+  VolumeKeyframe,
 } from "@/types";
 
 // Phase 1.5 store: clip ops, drag sessions, and a small undo/redo history layer.
@@ -126,6 +128,8 @@ interface EditorState {
   addClip: (clip: Clip) => void;
   removeClip: (id: string) => void;
   updateClip: (id: string, patch: Partial<Clip>) => void;
+  /** Patch several clips in one store write — one re-render per drag frame. */
+  updateClips: (patches: Record<string, Partial<Clip>>) => void;
   /** Move a clip to another track (and set its start). No history — used
    *  during a drag; caller snapshots once at gesture start. */
   moveClipToTrack: (clipId: string, newTrackId: string, startSec: number) => void;
@@ -150,6 +154,12 @@ interface EditorState {
   addKeyframeAtPlayhead: (clipId: string) => void;
   removeKeyframe: (clipId: string, index: number) => void;
   clearKeyframes: (clipId: string) => void;
+  // ── Volume keyframes (audio + video clips)
+  /** Set the volume: edits the keyframe at the playhead once the clip has any. */
+  setVolumeAtPlayhead: (clipId: string, volume: number) => void;
+  addVolumeKeyframeAtPlayhead: (clipId: string) => void;
+  removeVolumeKeyframe: (clipId: string, index: number) => void;
+  clearVolumeKeyframes: (clipId: string) => void;
 
   // ── Drag session (library → timeline)
   beginDragSession: (mediaId: string, kind: MediaItem["kind"]) => void;
@@ -456,6 +466,19 @@ export const useEditor = create<EditorState>((set, get) => ({
       if (!existing) return s;
       return { clips: { ...s.clips, [id]: { ...existing, ...patch } as Clip } };
     }),
+  // No history either — the caller pushes once at the start of a drag.
+  updateClips: (patches) =>
+    set((s) => {
+      const clips = { ...s.clips };
+      let touched = false;
+      for (const [id, patch] of Object.entries(patches)) {
+        const existing = clips[id];
+        if (!existing) continue;
+        clips[id] = { ...existing, ...patch } as Clip;
+        touched = true;
+      }
+      return touched ? { clips } : s;
+    }),
   moveClipToTrack: (clipId, newTrackId, startSec) =>
     set((s) => {
       const clip = s.clips[clipId];
@@ -740,6 +763,75 @@ export const useEditor = create<EditorState>((set, get) => ({
       if (!clip || clip.kind === "audio") return s;
       const vc = clip as MediaClip | TextClip;
       return withHistory(s, { clips: { ...s.clips, [clipId]: { ...vc, keyframes: undefined } as Clip } });
+    }),
+
+  // Volume keyframes. Mirrors the transform keyframe actions: once a clip has
+  // any, the static `volume` is no longer what plays, so edits must land in the
+  // keyframe at the playhead instead of silently diverging from the preview.
+  setVolumeAtPlayhead: (clipId, volume) =>
+    set((s) => {
+      const clip = s.clips[clipId];
+      if (!clip || clip.kind === "text") return s;
+      const mc = clip as MediaClip;
+      const v = Math.max(0, Math.min(MAX_VOLUME, volume));
+      const kfs = mc.volumeKeyframes;
+      if (!kfs || kfs.length === 0) {
+        return { clips: { ...s.clips, [clipId]: { ...mc, volume: v } as Clip } };
+      }
+      const t = Math.max(0, Math.min(mc.durationSec, s.playheadSec - mc.startSec));
+      const idx = kfs.findIndex((k) => Math.abs(k.tSec - t) <= KEYFRAME_EPSILON);
+      const volumeKeyframes =
+        idx >= 0
+          ? kfs.map((k, i) => (i === idx ? { ...k, volume: v } : k))
+          : [...kfs, { tSec: t, volume: v }].sort((a, b) => a.tSec - b.tSec);
+      return { clips: { ...s.clips, [clipId]: { ...mc, volumeKeyframes } as Clip } };
+    }),
+  addVolumeKeyframeAtPlayhead: (clipId) =>
+    set((s) => {
+      const clip = s.clips[clipId];
+      if (!clip || clip.kind === "text") return s;
+      const mc = clip as MediaClip;
+      const t = Math.max(0, Math.min(mc.durationSec, s.playheadSec - mc.startSec));
+      const kf: VolumeKeyframe = { tSec: t, volume: resolveVolume(mc, s.playheadSec) };
+      const existing = (mc.volumeKeyframes ?? []).filter(
+        (k) => Math.abs(k.tSec - t) > KEYFRAME_EPSILON,
+      );
+      const volumeKeyframes = [...existing, kf].sort((a, b) => a.tSec - b.tSec);
+      return withHistory(s, {
+        clips: { ...s.clips, [clipId]: { ...mc, volumeKeyframes } as Clip },
+      });
+    }),
+  removeVolumeKeyframe: (clipId, index) =>
+    set((s) => {
+      const clip = s.clips[clipId];
+      if (!clip || clip.kind === "text") return s;
+      const mc = clip as MediaClip;
+      if (!mc.volumeKeyframes) return s;
+      const next = mc.volumeKeyframes.filter((_, i) => i !== index);
+      // Dropping to a single keyframe would animate nothing; dropping to none
+      // hands playback back to the static `volume`, so carry the last value
+      // over rather than silently jumping back to the pre-keyframe level.
+      const volume = next.length === 0 ? mc.volumeKeyframes[0].volume : mc.volume;
+      return withHistory(s, {
+        clips: {
+          ...s.clips,
+          [clipId]: {
+            ...mc,
+            volume,
+            volumeKeyframes: next.length ? next : undefined,
+          } as Clip,
+        },
+      });
+    }),
+  clearVolumeKeyframes: (clipId) =>
+    set((s) => {
+      const clip = s.clips[clipId];
+      if (!clip || clip.kind === "text") return s;
+      const mc = clip as MediaClip;
+      const volume = mc.volumeKeyframes?.length ? mc.volumeKeyframes[0].volume : mc.volume;
+      return withHistory(s, {
+        clips: { ...s.clips, [clipId]: { ...mc, volume, volumeKeyframes: undefined } as Clip },
+      });
     }),
 
   // Drag session

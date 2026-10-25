@@ -213,14 +213,92 @@ export function snapToAnchors(
   return best;
 }
 
-/** All clip edges except the given clip (so a moving clip doesn't snap to itself). */
-export function clipEdgeAnchors(clips: Clip[], excludeId?: string): number[] {
+/**
+ * All clip edges except the excluded clip(s), so clips being moved don't snap to
+ * themselves. Takes a single id or a set of them (a multi-clip drag).
+ */
+export function clipEdgeAnchors(
+  clips: Clip[],
+  exclude?: string | ReadonlySet<string>,
+): number[] {
+  const skip: ReadonlySet<string> | undefined =
+    typeof exclude === "string" ? new Set([exclude]) : exclude;
   const out: number[] = [];
   for (const c of clips) {
-    if (c.id === excludeId) continue;
+    if (skip?.has(c.id)) continue;
     out.push(c.startSec, c.startSec + c.durationSec);
   }
   return out;
+}
+
+/**
+ * The effective volume of a clip at a timeline time. With no volume keyframes
+ * this is the clip's static `volume`; otherwise the surrounding keyframes are
+ * interpolated linearly and held flat outside their range — the same
+ * clamp-and-lerp `resolveTransform` uses, so the two read consistently.
+ */
+export function resolveVolume(clip: MediaClip, playheadSec: number): number {
+  const kfs = clip.volumeKeyframes;
+  if (!kfs || kfs.length === 0) return clip.volume;
+  const t = playheadSec - clip.startSec;
+  if (t <= kfs[0].tSec) return kfs[0].volume;
+  const last = kfs[kfs.length - 1];
+  if (t >= last.tSec) return last.volume;
+  for (let i = 0; i < kfs.length - 1; i++) {
+    const a = kfs[i];
+    const b = kfs[i + 1];
+    if (t >= a.tSec && t <= b.tSec) {
+      const span = b.tSec - a.tSec || 1;
+      return lerp(a.volume, b.volume, (t - a.tSec) / span);
+    }
+  }
+  return last.volume;
+}
+
+/**
+ * How far a whole selection can slide along the timeline without any of its
+ * clips colliding with a clip that isn't moving — the delta window for a
+ * multi-clip drag (#39). Moving clips are invisible to each other, so a video
+ * and its detached audio keep their relative offset (that's the point), and the
+ * tightest clip in the selection limits the group.
+ */
+export function groupMoveWindow(
+  movingIds: readonly string[],
+  allClips: Record<string, Clip>,
+): { min: number; max: number } {
+  const moving = new Set(movingIds);
+  let min = -Infinity;
+  let max = Infinity;
+  let any = false;
+
+  for (const id of movingIds) {
+    const c = allClips[id];
+    if (!c) continue;
+    any = true;
+    const end = c.startSec + c.durationSec;
+    let lo = -c.startSec; // the timeline starts at 0
+    let hi = Infinity;
+    for (const other of Object.values(allClips)) {
+      if (moving.has(other.id) || other.trackId !== c.trackId) continue;
+      const otherEnd = other.startSec + other.durationSec;
+      if (otherEnd <= c.startSec + 1e-6) {
+        lo = Math.max(lo, otherEnd - c.startSec);
+      } else if (other.startSec >= end - 1e-6) {
+        hi = Math.min(hi, other.startSec - end);
+      } else {
+        // Already overlapping (invariant broken elsewhere) — don't move at all
+        // rather than make it worse.
+        return { min: 0, max: 0 };
+      }
+    }
+    min = Math.max(min, lo);
+    max = Math.min(max, hi);
+  }
+
+  if (!any) return { min: 0, max: 0 };
+  if (min === -Infinity) min = 0;
+  if (max < min) return { min: 0, max: 0 };
+  return { min, max };
 }
 
 /**

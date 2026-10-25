@@ -26,6 +26,8 @@ const DEFAULTS: UiPrefs = {
   panelSizes: DEFAULT_PANEL_SIZES,
   autosave: DEFAULT_AUTOSAVE,
   zoomToPlayhead: false,
+  sidebarLabels: true,
+  snapPlayhead: true,
 };
 
 interface PrefsState extends UiPrefs {
@@ -42,6 +44,8 @@ interface PrefsState extends UiPrefs {
   /** Patch autosave prefs and persist. */
   setAutosave: (patch: Partial<AutosavePrefs>) => void;
   setZoomToPlayhead: (on: boolean) => void;
+  setSidebarLabels: (on: boolean) => void;
+  setSnapPlayhead: (on: boolean) => void;
 }
 
 // Apply the theme to <html>: toggles the `dark` class Tailwind keys off and
@@ -91,6 +95,8 @@ export const usePrefs = create<PrefsState>((set, get) => ({
         panelSizes: { ...DEFAULT_PANEL_SIZES, ...(ui.panelSizes ?? {}) },
         autosave: { ...DEFAULT_AUTOSAVE, ...(ui.autosave ?? {}) },
         zoomToPlayhead: ui.zoomToPlayhead ?? DEFAULTS.zoomToPlayhead,
+        sidebarLabels: ui.sidebarLabels ?? DEFAULTS.sidebarLabels,
+        snapPlayhead: ui.snapPlayhead ?? DEFAULTS.snapPlayhead,
       };
       set({ ...merged, loaded: true });
       applyTheme(merged.theme);
@@ -134,5 +140,13 @@ export const usePrefs = create<PrefsState>((set, get) => ({
   setZoomToPlayhead: (zoomToPlayhead) => {
     set({ zoomToPlayhead });
     void persist({ zoomToPlayhead });
+  },
+  setSidebarLabels: (sidebarLabels) => {
+    set({ sidebarLabels });
+    void persist({ sidebarLabels });
+  },
+  setSnapPlayhead: (snapPlayhead) => {
+    set({ snapPlayhead });
+    void persist({ snapPlayhead });
   },
 }));

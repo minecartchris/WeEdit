@@ -13,6 +13,7 @@ import {
   previousClipOnTrack,
   pxToPct,
   resolveTransform,
+  resolveVolume,
 } from "@/lib/clips";
 import { MAX_VOLUME } from "@/lib/audioGain";
 import { useEditor } from "@/state/editor";
@@ -67,6 +68,7 @@ function ClipInspector({ clip }: { clip: Clip }) {
       {(clip.kind === "video" || clip.kind === "image") && <CropProps clip={clip} />}
       {clip.kind !== "audio" && <TransformProps clip={clip} />}
       {clip.kind !== "audio" && <KeyframeProps clip={clip} />}
+      {clip.kind !== "image" && clip.kind !== "text" && <VolumeKeyframeProps clip={clip} />}
       {(clip.kind === "video" || clip.kind === "image") && <TransitionProps clip={clip} />}
     </div>
   );
@@ -354,6 +356,86 @@ function KeyframeProps({ clip }: { clip: MediaClip | TextClip }) {
   );
 }
 
+// Volume over time for audio/video clips. Mirrors KeyframeProps, but on its own
+// because audio clips have no transform section to hang it off (#40): a music
+// bed can now fade up or duck under speech instead of being razored into pieces
+// with a different static volume on each one.
+function VolumeKeyframeProps({ clip }: { clip: MediaClip }) {
+  const addKeyframe = useEditor((s) => s.addVolumeKeyframeAtPlayhead);
+  const removeKeyframe = useEditor((s) => s.removeVolumeKeyframe);
+  const clearKeyframes = useEditor((s) => s.clearVolumeKeyframes);
+  const setPlayhead = useEditor((s) => s.setPlayhead);
+  const playheadSec = useEditor((s) => s.playheadSec);
+  const kfs = clip.volumeKeyframes ?? [];
+  const localT = playheadSec - clip.startSec;
+  const overClip = localT >= -KEYFRAME_EPSILON && localT <= clip.durationSec + KEYFRAME_EPSILON;
+
+  return (
+    <section className="flex flex-col gap-2 border-t border-we-border pt-4">
+      <div className="flex items-center justify-between">
+        <SectionTitle>Volume keyframes</SectionTitle>
+        {kfs.length > 0 && (
+          <button onClick={() => clearKeyframes(clip.id)} className="text-[11px] text-we-muted hover:text-we-ink">
+            Clear
+          </button>
+        )}
+      </div>
+      <button
+        onClick={() => addKeyframe(clip.id)}
+        disabled={!overClip}
+        className={[
+          "we-btn justify-center border border-we-border",
+          overClip ? "" : "opacity-40 cursor-not-allowed",
+        ].join(" ")}
+        title={
+          overClip
+            ? "Capture the current volume as a keyframe at the playhead"
+            : "Move the playhead over this clip to add a keyframe"
+        }
+      >
+        <Diamond className="w-4 h-4 text-we-teal" />
+        Add volume keyframe
+      </button>
+      {kfs.length > 0 && (
+        <ul className="flex flex-col gap-1">
+          {kfs.map((k, i) => {
+            const active = Math.abs(k.tSec - localT) <= KEYFRAME_EPSILON;
+            return (
+              <li
+                key={i}
+                className={[
+                  "flex items-center justify-between gap-2 text-xs px-2 py-1 rounded",
+                  active ? "bg-we-teal/15 text-we-ink" : "text-we-muted hover:bg-we-hover",
+                ].join(" ")}
+              >
+                <button
+                  onClick={() => setPlayhead(clip.startSec + k.tSec)}
+                  className="flex-1 min-w-0 text-left tabular-nums truncate"
+                  title="Jump the playhead here to edit this keyframe's volume above"
+                >
+                  {k.tSec.toFixed(2)}s · {Math.round(k.volume * 100)}%
+                </button>
+                <button
+                  onClick={() => removeKeyframe(clip.id, i)}
+                  className="text-we-muted hover:text-red-500 shrink-0"
+                  title="Remove keyframe"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      <p className="text-[10px] text-we-muted leading-4">
+        {kfs.length > 0
+          ? "Volume now follows these keyframes; the Volume field above edits the one at the playhead."
+          : "Add 2+ keyframes at different playhead times to fade the volume over the clip."}
+      </p>
+    </section>
+  );
+}
+
 function MediaProps({ clip }: { clip: MediaClip }) {
   const updateClip = useEditor((s) => s.updateClip);
   const pushHistory = useEditor((s) => s.pushHistory);
@@ -362,6 +444,9 @@ function MediaProps({ clip }: { clip: MediaClip }) {
   const media = useEditor((s) => s.media.find((m) => m.id === clip.mediaId) ?? null);
   const pitchPreserved = clip.pitchPreserved ?? true;
 
+  const setVolumeAtPlayhead = useEditor((s) => s.setVolumeAtPlayhead);
+  const playheadSec = useEditor((s) => s.playheadSec);
+  const volumeAtPlayhead = resolveVolume(clip, playheadSec);
   const muted = clip.mutedTracks ?? [];
   const toggleTrackMute = (index: number) => {
     const next = muted.includes(index) ? muted.filter((i) => i !== index) : [...muted, index];
@@ -386,17 +471,20 @@ function MediaProps({ clip }: { clip: MediaClip }) {
       )}
       {clip.kind !== "image" && (
         <>
+          {/* Shows the volume AT THE PLAYHEAD so a keyframed clip reads live, and
+              writes back into the keyframe the playhead is on — the same
+              contract the transform fields have. */}
           <NumberField
             label="Volume"
-            value={Math.round(clip.volume * 100)}
+            value={Math.round(volumeAtPlayhead * 100)}
             min={0}
             max={MAX_VOLUME * 100}
             suffix="%"
             resetTo={100}
             onCommitStart={pushHistory}
-            onChange={(v) => updateClip(clip.id, { volume: v / 100 })}
+            onChange={(v) => setVolumeAtPlayhead(clip.id, v / 100)}
           />
-          {clip.volume > 1 && (
+          {volumeAtPlayhead > 1 && (
             <div className="text-[10px] text-we-muted leading-4 -mt-1">
               Above 100% boosts this clip louder than its source.
             </div>

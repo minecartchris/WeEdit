@@ -2,6 +2,7 @@ import {
   ArrowDown,
   ArrowUp,
   ChevronDown,
+  Magnet,
   Maximize2,
   MoreVertical,
   Music,
@@ -22,7 +23,7 @@ import { ClipBlock } from "@/components/ClipBlock";
 import { CollaboratorCursors } from "@/components/CollaboratorCursors";
 import { Menu, MenuItem, MenuLabel, MenuSeparator } from "@/components/ui/Menu";
 import { MAX_VOLUME } from "@/lib/audioGain";
-import { isMediaCompatibleWithTrack } from "@/lib/clips";
+import { clipEdgeAnchors, isMediaCompatibleWithTrack, snapToAnchors } from "@/lib/clips";
 import { formatTimecode, useEditor } from "@/state/editor";
 import { usePrefs } from "@/state/prefs";
 import type { Clip, Track, TrackKind } from "@/types";
@@ -60,17 +61,25 @@ export function Timeline() {
 
   const rulerRef = useRef<HTMLDivElement>(null);
 
+  // Scrubbing the ruler snaps the playhead to clip edges while snapping is on,
+  // so a cut made earlier on one track can be matched exactly on another later
+  // — without it you can never land back on an existing cut by hand (#37).
   const onRulerMouseDown = (e: React.MouseEvent) => {
     if (e.button !== 0) return;
     const lane = rulerRef.current;
     if (!lane) return;
     const rect = lane.getBoundingClientRect();
-    const setFromX = (clientX: number) => {
+    const anchors = [...clipEdgeAnchors(Object.values(clipsMap)), 0];
+    const setFromX = (clientX: number, shiftKey: boolean) => {
       const x = Math.max(0, clientX - rect.left + lane.scrollLeft);
-      setPlayhead(x / pxPerSec);
+      const sec = x / pxPerSec;
+      // Shift is the universal "ignore snapping" modifier here, matching the
+      // clip drag/trim handlers.
+      const snap = usePrefs.getState().snapPlayhead && !shiftKey;
+      setPlayhead(snap ? snapToAnchors(sec, anchors, pxPerSec) : sec);
     };
-    setFromX(e.clientX);
-    const onMove = (ev: MouseEvent) => setFromX(ev.clientX);
+    setFromX(e.clientX, e.shiftKey);
+    const onMove = (ev: MouseEvent) => setFromX(ev.clientX, ev.shiftKey);
     const onUp = () => {
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
@@ -260,6 +269,8 @@ function TimelineToolbar({
   const splitAtPlayhead = useEditor((s) => s.splitAtPlayhead);
   const deleteSelected = useEditor((s) => s.deleteSelected);
   const selectedCount = useEditor((s) => s.selectedClipIds.length);
+  const snapPlayhead = usePrefs((s) => s.snapPlayhead);
+  const setSnapPlayhead = usePrefs((s) => s.setSnapPlayhead);
 
   return (
     <div className="h-11 shrink-0 flex items-center gap-1 px-3 border-b border-we-border">
@@ -318,6 +329,21 @@ function TimelineToolbar({
         onClick={deleteSelected}
       />
 
+      <Sep />
+
+      <ToolbarButton
+        icon={Magnet}
+        label="Snap"
+        shortcut="N"
+        active={snapPlayhead}
+        onClick={() => setSnapPlayhead(!snapPlayhead)}
+        title={
+          snapPlayhead
+            ? "Snapping on — the playhead and clips snap to clip edges (hold Shift to override)"
+            : "Snapping off — the playhead and clips move freely"
+        }
+      />
+
       <div className="flex-1" />
 
       <span className="font-mono text-sm text-we-ink tabular-nums">{timecode}</span>
@@ -353,6 +379,8 @@ function ToolbarButton({
   onClick,
   disabled,
   accent,
+  active,
+  title,
 }: {
   icon: React.ComponentType<{ className?: string }>;
   label: string;
@@ -360,18 +388,30 @@ function ToolbarButton({
   onClick?: () => void;
   disabled?: boolean;
   accent?: boolean;
+  /** Renders as a pressed toggle (for on/off tools like snapping). */
+  active?: boolean;
+  /** Overrides the default "Label (Shortcut)" tooltip. */
+  title?: string;
 }) {
+  const tip = title ?? (shortcut ? `${label} (${shortcut})` : label);
   return (
     <button
       onClick={onClick}
       disabled={disabled}
-      title={shortcut ? `${label} (${shortcut})` : label}
+      title={shortcut && title ? `${tip} (${shortcut})` : tip}
+      aria-pressed={active}
       className={[
         "we-btn-ghost",
         disabled ? "opacity-40 cursor-not-allowed" : "",
+        active ? "bg-we-teal/15 text-we-ink" : "",
       ].join(" ")}
     >
-      <Icon className={["w-4 h-4", accent && !disabled ? "text-we-teal" : "text-we-muted"].join(" ")} />
+      <Icon
+        className={[
+          "w-4 h-4",
+          (accent || active) && !disabled ? "text-we-teal" : "text-we-muted",
+        ].join(" ")}
+      />
       {label}
     </button>
   );

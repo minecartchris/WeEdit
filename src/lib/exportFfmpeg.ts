@@ -319,7 +319,10 @@ function compileAudio(ctx: AudioCompileCtx): string | null {
     const track = tracks.find((t) => t.id === mc.trackId);
     if (track?.muted) continue;
     const effVolume = mc.volume * (track?.volume ?? 1);
-    if (effVolume <= 0) continue;
+    // A keyframed clip's static `volume` isn't what plays, so only a clip with
+    // no keyframes can be dropped here for being silent.
+    const hasVolumeKeyframes = (mc.volumeKeyframes?.length ?? 0) > 0;
+    if (!hasVolumeKeyframes && effVolume <= 0) continue;
 
     const startSec = Math.max(0, mc.startSec);
     // Speed: trim `durationSec * speed` of source, then retime to durationSec.
@@ -336,7 +339,14 @@ function compileAudio(ctx: AudioCompileCtx): string | null {
     const trim =
       `atrim=start=${mc.sourceInSec.toFixed(3)}:duration=${(mc.durationSec * speed).toFixed(3)},asetpts=PTS-STARTPTS` +
       (speedFilter ? `,${speedFilter}` : "");
-    const volume = `volume=${effVolume.toFixed(3)}`;
+    // Volume keyframes animate the same way the transform ones do. `t` inside
+    // this filter is clip-relative: the atrim/asetpts above zeroed the PTS, and
+    // the timeline delay is added afterwards by placeOnTimeline.
+    const volumeTrack = volumeTrackFor(mc);
+    const volume =
+      volumeTrack === null
+        ? `volume=${effVolume.toFixed(3)}`
+        : `volume='(${volumeTrack})*${(track?.volume ?? 1).toFixed(3)}':eval=frame`;
 
     if (m.kind === "image") continue;
 
@@ -474,6 +484,32 @@ function transformTrack(
     },
     peakAbs: Math.max(...values.map((v) => Math.abs(v))),
   };
+}
+
+/**
+ * A clip's volume as an ffmpeg expression in clip-relative `t`, or null when it
+ * isn't keyframed (the caller then emits a plain constant). Reuses the same
+ * clamp-and-lerp shape as the transform tracks so export matches `resolveVolume`.
+ */
+function volumeTrackFor(clip: MediaClip): string | null {
+  const kfs = clip.volumeKeyframes;
+  if (!kfs || kfs.length === 0) return null;
+  const pts = [...kfs].sort((a, b) => a.tSec - b.tSec);
+  const values = pts.map((p) => Math.max(0, p.volume));
+  if (values.length === 1) return values[0].toFixed(4);
+  if (Math.max(...values) - Math.min(...values) < TRANSFORM_EPSILON) {
+    return values[0].toFixed(4);
+  }
+  let out = values[values.length - 1].toFixed(4);
+  for (let i = pts.length - 2; i >= 0; i--) {
+    const aT = pts[i].tSec;
+    const bT = pts[i + 1].tSec;
+    const span = Math.max(1e-6, bT - aT);
+    const held = `clip(t,${aT.toFixed(3)},${bT.toFixed(3)})`;
+    const seg = `(${values[i].toFixed(4)}+(${(values[i + 1] - values[i]).toFixed(4)})*(${held}-${aT.toFixed(3)})/${span.toFixed(6)})`;
+    out = `if(lt(t,${bT.toFixed(3)}),${seg},${out})`;
+  }
+  return out;
 }
 
 /** Clip-relative time, for filters whose `t` is composite/timeline time. */

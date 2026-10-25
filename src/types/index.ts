@@ -87,6 +87,19 @@ export interface Keyframe {
   tilt: number;
 }
 
+/**
+ * A single volume keyframe for an audio/video clip. `tSec` is relative to the
+ * clip start, and `volume` is the same 0..MAX_VOLUME multiplier as the clip's
+ * static `volume`. Kept separate from `Keyframe` because volume animates on
+ * audio clips, which have no transform at all.
+ */
+export interface VolumeKeyframe {
+  /** Time within the clip, in seconds from clip start. */
+  tSec: number;
+  /** 0 = silent, 1 = unity, above 1 = boost. */
+  volume: number;
+}
+
 /** Cross-clip transition types (blended over the incoming clip's lead-in). */
 export type TransitionType = "crossfade" | "wipe";
 
@@ -136,6 +149,13 @@ export interface MediaClip extends ClipBase, Transform {
   opacity: number;
   /** 0..1, applies to video/audio. */
   volume: number;
+  /**
+   * Optional volume keyframes, sorted by tSec. When present they REPLACE
+   * `volume` for playback and export (interpolated, clamped at both ends) —
+   * same contract as `keyframes` vs. the static transform fields. Lets a track
+   * fade in or duck under speech without being cut into pieces.
+   */
+  volumeKeyframes?: VolumeKeyframe[];
   /**
    * Playback speed multiplier for video/audio (1 = normal, 2 = twice as fast,
    * 0.5 = half speed). Changing it rescales the clip's timeline duration. The
@@ -231,6 +251,10 @@ export interface UiPrefs {
   /** Timeline zoom (Alt+wheel and the zoom slider) anchors on the playhead
    *  instead of the mouse pointer / view centre. */
   zoomToPlayhead: boolean;
+  /** Show the library rail's tab names; off collapses it to icons only. */
+  sidebarLabels: boolean;
+  /** The playhead snaps to clip edges (and clips snap to the playhead). */
+  snapPlayhead: boolean;
 }
 
 export interface ProjectMeta {

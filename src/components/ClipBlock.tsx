@@ -7,9 +7,11 @@ import {
   clampClipStart,
   clipEdgeAnchors,
   clipNoOverlapWindow,
+  groupMoveWindow,
   snapToAnchors,
 } from "@/lib/clips";
 import { useEditor } from "@/state/editor";
+import { usePrefs } from "@/state/prefs";
 import { useWaveform } from "@/lib/waveform";
 import { replaceMediaFile } from "@/lib/relink";
 import { useIsMediaMissing } from "@/state/missingMedia";
@@ -30,6 +32,7 @@ export function ClipBlock({ clip, pxPerSec }: ClipBlockProps) {
   const pushHistory = useEditor((s) => s.pushHistory);
   const removeClip = useEditor((s) => s.removeClip);
   const moveClipToTrack = useEditor((s) => s.moveClipToTrack);
+  const updateClips = useEditor((s) => s.updateClips);
   const detachAudio = useEditor((s) => s.detachAudio);
   const splitAtPlayhead = useEditor((s) => s.splitAtPlayhead);
   const setPlayhead = useEditor((s) => s.setPlayhead);
@@ -46,10 +49,18 @@ export function ClipBlock({ clip, pxPerSec }: ClipBlockProps) {
       : undefined;
   const missing = useIsMediaMissing(sourceMedia?.id);
 
-  const collectAnchors = useCallback((): number[] => {
-    const all = Object.values(allClips);
-    return [...clipEdgeAnchors(all, clip.id), playheadSec, 0];
-  }, [allClips, clip.id, playheadSec]);
+  // Snap targets for a drag/trim: every other clip's edges, the timeline start,
+  // and — only while snapping is on — the playhead, so a cut can be lined up
+  // with one made earlier (#37). `exclude` is the clip or clips being moved, so
+  // they never snap to themselves.
+  const collectAnchors = useCallback(
+    (exclude: string | ReadonlySet<string> = clip.id): number[] => {
+      const all = Object.values(allClips);
+      const base = [...clipEdgeAnchors(all, exclude), 0];
+      return usePrefs.getState().snapPlayhead ? [...base, playheadSec] : base;
+    },
+    [allClips, clip.id, playheadSec],
+  );
 
   // ── Body drag (move along time axis) ──
   const onBodyPointerDown = (e: React.PointerEvent) => {
@@ -60,13 +71,69 @@ export function ClipBlock({ clip, pxPerSec }: ClipBlockProps) {
     // leaking our move listener so the clip "sticks" to the cursor).
     e.preventDefault();
     e.stopPropagation();
-    selectClip(clip.id, e.shiftKey);
+
+    // Dragging one clip of a multi-selection moves the whole selection, keeping
+    // every clip's relative offset — the point being to slide a video and its
+    // detached audio (and titles, and overlays) without them drifting apart
+    // (#39). So a plain mousedown on an already-selected clip must NOT collapse
+    // the selection to that one clip; it narrows on pointerup instead, if the
+    // pointer never moved (i.e. it was a click, not a drag).
+    const selectionAtDown = useEditor.getState().selectedClipIds;
+    const inMultiSelection = selectionAtDown.length > 1 && selectionAtDown.includes(clip.id);
+    if (e.shiftKey || !inMultiSelection) selectClip(clip.id, e.shiftKey);
     pushHistory();
 
     const el = e.currentTarget as HTMLElement;
     el.setPointerCapture?.(e.pointerId);
     const startX = e.clientX;
     const initialStart = clip.startSec;
+
+    // Group drag: horizontal only. Re-homing a mixed selection onto other
+    // tracks has no single sensible answer (an audio clip can't follow a video
+    // clip onto a video lane), and silently moving only some of them would
+    // break exactly the sync this is meant to preserve.
+    const groupDrag = !e.shiftKey && inMultiSelection;
+    if (groupDrag) {
+      const liveClips = useEditor.getState().clips;
+      const groupIds = selectionAtDown.filter((id) => liveClips[id]);
+      const bases = new Map(groupIds.map((id) => [id, liveClips[id].startSec]));
+      const window_ = groupMoveWindow(groupIds, liveClips);
+      const anchors = collectAnchors(new Set(groupIds));
+      let moved = false;
+
+      const onGroupMove = (ev: PointerEvent) => {
+        const dPx = ev.clientX - startX;
+        if (Math.abs(dPx) > 3) moved = true;
+        let d = dPx / pxPerSec;
+        if (!ev.shiftKey) {
+          // Snap on whichever edge of the dragged clip lands closest, so a
+          // group can be butted up against a neighbour from either side.
+          const candStart = initialStart + d;
+          const candEnd = candStart + clip.durationSec;
+          const dStart = snapToAnchors(candStart, anchors, pxPerSec) - candStart;
+          const dEnd = snapToAnchors(candEnd, anchors, pxPerSec) - candEnd;
+          d += Math.abs(dStart) <= Math.abs(dEnd) ? dStart : dEnd;
+        }
+        d = Math.max(window_.min, Math.min(window_.max, d));
+        const patches: Record<string, { startSec: number }> = {};
+        for (const [id, base] of bases) patches[id] = { startSec: Math.max(0, base + d) };
+        updateClips(patches);
+      };
+      const onGroupUp = () => {
+        try { el.releasePointerCapture?.(e.pointerId); } catch { /* capture already lost */ }
+        window.removeEventListener("pointermove", onGroupMove);
+        window.removeEventListener("pointerup", onGroupUp);
+        window.removeEventListener("pointercancel", onGroupUp);
+        // A click (no movement) on a clip inside a multi-selection narrows the
+        // selection down to it, which is what the deferred selectClip above is.
+        if (!moved) selectClip(clip.id, false);
+      };
+      window.addEventListener("pointermove", onGroupMove);
+      window.addEventListener("pointerup", onGroupUp);
+      window.addEventListener("pointercancel", onGroupUp);
+      return;
+    }
+
     const anchors = collectAnchors();
 
     const onMove = (ev: PointerEvent) => {

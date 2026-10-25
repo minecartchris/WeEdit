@@ -1,5 +1,7 @@
 import {
   Box,
+  ChevronLeft,
+  ChevronRight,
   FileVideo,
   HardDrive,
   Image as ImageIcon,
@@ -14,6 +16,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useEditor } from "@/state/editor";
+import { usePrefs } from "@/state/prefs";
 import type { LibraryFilter } from "@/types";
 
 interface SidebarItem {
@@ -40,9 +43,19 @@ const items: SidebarItem[] = [
 export function Sidebar() {
   const active = useEditor((s) => s.libraryFilter);
   const setActive = useEditor((s) => s.setLibraryFilter);
+  // Collapsing to icons only gives the preview the rail's width back without
+  // shrinking the media list itself. The choice persists across sessions, since
+  // once you know the icons you never want the labels again.
+  const showLabels = usePrefs((s) => s.sidebarLabels);
+  const setShowLabels = usePrefs((s) => s.setSidebarLabels);
 
   return (
-    <aside className="w-52 shrink-0 bg-we-rail border-r border-we-border py-3">
+    <aside
+      className={[
+        "shrink-0 bg-we-rail border-r border-we-border py-3 flex flex-col",
+        showLabels ? "w-52" : "w-14",
+      ].join(" ")}
+    >
       <nav className="flex flex-col">
         {items.map(({ key, label, icon: Icon }) => {
           const isActive = active === key;
@@ -50,19 +63,41 @@ export function Sidebar() {
             <button
               key={key}
               onClick={() => setActive(key)}
+              title={showLabels ? undefined : label}
+              aria-label={label}
               className={[
-                "flex items-center gap-2.5 px-4 py-2 text-sm transition-colors",
+                "flex items-center gap-2.5 py-2 text-sm transition-colors",
+                showLabels ? "px-4" : "px-0 justify-center",
                 isActive
                   ? "bg-we-teal/10 text-we-ink font-medium"
                   : "text-we-ink hover:bg-we-hover",
               ].join(" ")}
             >
-              <Icon className={["w-4 h-4", isActive ? "text-we-teal" : "text-we-muted"].join(" ")} />
-              <span>{label}</span>
+              <Icon className={["w-4 h-4 shrink-0", isActive ? "text-we-teal" : "text-we-muted"].join(" ")} />
+              {showLabels && <span className="truncate">{label}</span>}
             </button>
           );
         })}
       </nav>
+
+      <button
+        onClick={() => setShowLabels(!showLabels)}
+        title={showLabels ? "Hide tab names" : "Show tab names"}
+        aria-label={showLabels ? "Hide tab names" : "Show tab names"}
+        className={[
+          "mt-auto flex items-center gap-2.5 py-2 text-xs text-we-muted hover:bg-we-hover hover:text-we-ink transition-colors",
+          showLabels ? "px-4" : "px-0 justify-center",
+        ].join(" ")}
+      >
+        {showLabels ? (
+          <>
+            <ChevronLeft className="w-4 h-4 shrink-0" />
+            <span>Hide names</span>
+          </>
+        ) : (
+          <ChevronRight className="w-4 h-4 shrink-0" />
+        )}
+      </button>
     </aside>
   );
 }

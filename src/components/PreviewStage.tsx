@@ -1,7 +1,7 @@
 import { toPlayableUrl } from "@/lib/media";
 import { MAX_VOLUME, applyLoudness } from "@/lib/audioGain";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { MAX_SCALE, MIN_SCALE, cropClipPath, previousClipOnTrack, resolveTransform, type ResolvedTransform } from "@/lib/clips";
+import { MAX_SCALE, MIN_SCALE, cropClipPath, previousClipOnTrack, resolveTransform, resolveVolume, type ResolvedTransform } from "@/lib/clips";
 import { useEditor } from "@/state/editor";
 import type { AspectRatio, Clip, MediaClip, MediaItem, TextClip } from "@/types";
 
@@ -712,7 +712,8 @@ function collectActiveVisuals(
     if (!active) continue;
     const mActive = media.find((m) => m.id === active!.mediaId);
     if (!mActive) continue;
-    const vol = (c: MediaClip) => (track.muted ? 0 : clampVol(c.volume * track.volume));
+    const vol = (c: MediaClip) =>
+      track.muted ? 0 : clampVol(resolveVolume(c, playheadSec) * track.volume);
 
     const tr = active.transition;
     const local = playheadSec - active.startSec;
@@ -783,7 +784,7 @@ function collectActiveAudios(
           trackId: track.id,
           clip: c as MediaClip,
           media: m,
-          volume: clampVol((c as MediaClip).volume * track.volume),
+          volume: clampVol(resolveVolume(c as MediaClip, playheadSec) * track.volume),
         });
       }
     }

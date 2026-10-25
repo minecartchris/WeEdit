@@ -1,6 +1,7 @@
 import { commitVersion } from "@/lib/history";
 import { newProject, openProject, saveProject, snapshotForFile } from "@/lib/project";
 import { useEditor } from "@/state/editor";
+import { usePrefs } from "@/state/prefs";
 
 // Central registry of keyboard commands. Each has a stable id, a label for the
 // settings UI, a default key combo, and a run() that performs the action.
@@ -58,6 +59,17 @@ export const SHORTCUT_COMMANDS: ShortcutCommand[] = [
   { id: "jump-end", label: "Jump to end", defaultBinding: "end", run: jumpToEnd },
   { id: "frame-back", label: "Step back one frame", defaultBinding: "arrowleft", run: () => stepFrame(-1) },
   { id: "frame-forward", label: "Step forward one frame", defaultBinding: "arrowright", run: () => stepFrame(1) },
+  {
+    id: "toggle-snap",
+    label: "Toggle snapping",
+    // N is what DaVinci Resolve binds snapping to, so it's the one most users
+    // will reach for without being told.
+    defaultBinding: "n",
+    run: () => {
+      const { snapPlayhead, setSnapPlayhead } = usePrefs.getState();
+      setSnapPlayhead(!snapPlayhead);
+    },
+  },
 ];
 
 // Built-in alternative bindings that map onto a command id. Applied only when a

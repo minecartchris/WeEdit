@@ -33,3 +33,7 @@ tokio = { version = "1", features = ["fs"] }
 # Content-addressing + chunk encoding for peer-to-peer media sync (collab).
 sha2 = "0.10"
 base64 = "0.22"
+# Lossless block compression for peer-to-peer media transfer. Pure-Rust backend
+# (miniz_oxide) so no C toolchain is needed; the sender skips it when a block
+# doesn't shrink, which is the common case for already-compressed video.
+flate2 = "1"

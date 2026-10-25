@@ -10,6 +10,7 @@ export interface Transfer {
   name: string;
   received: number; // bytes written so far
   total: number;    // total bytes (0 if unknown)
+  rate: number;     // bytes/sec, sampled over the last ~0.5s (0 if unknown)
   status: "fetching" | "verifying" | "done" | "error";
 }
 
@@ -22,7 +23,8 @@ export const useTransfers = create<TransfersState>(() => ({ transfers: {} }));
 export function setTransfer(hash: string, patch: Partial<Transfer> & { name?: string }): void {
   useTransfers.setState((s) => {
     const prev =
-      s.transfers[hash] ?? { hash, name: "", received: 0, total: 0, status: "fetching" as const };
+      s.transfers[hash] ??
+      { hash, name: "", received: 0, total: 0, rate: 0, status: "fetching" as const };
     return { transfers: { ...s.transfers, [hash]: { ...prev, ...patch } } };
   });
 }

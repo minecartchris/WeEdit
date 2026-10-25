@@ -19,8 +19,41 @@ export function MediaSyncIndicator() {
   );
 }
 
+const UNITS = ["B", "KB", "MB", "GB", "TB"];
+
+function formatBytes(n: number): string {
+  let i = 0;
+  while (n >= 1024 && i < UNITS.length - 1) {
+    n /= 1024;
+    i++;
+  }
+  return `${n < 10 && i > 0 ? n.toFixed(1) : Math.round(n)} ${UNITS[i]}`;
+}
+
+function formatEta(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) return "";
+  if (seconds < 60) return `${Math.ceil(seconds)}s left`;
+  if (seconds < 3600) return `${Math.ceil(seconds / 60)}m left`;
+  const h = Math.floor(seconds / 3600);
+  return `${h}h ${Math.ceil((seconds - h * 3600) / 60)}m left`;
+}
+
 function TransferRow({ t }: { t: Transfer }) {
   const pct = t.total > 0 ? Math.min(100, Math.round((t.received / t.total) * 100)) : 0;
+  const active = t.status === "fetching";
+  // Speed and remaining time are the whole point of the toast on a big source —
+  // "47%" alone doesn't say whether to wait or to go and share the file over the
+  // network drive instead.
+  const detail = active
+    ? [
+        t.total > 0 ? `${formatBytes(t.received)} / ${formatBytes(t.total)}` : formatBytes(t.received),
+        t.rate > 0 ? `${formatBytes(t.rate)}/s` : "",
+        t.rate > 0 && t.total > 0 ? formatEta((t.total - t.received) / t.rate) : "",
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : "";
+
   return (
     <div className="rounded-lg border border-we-border bg-we-panel shadow-lg px-3 py-2.5 flex flex-col gap-1.5">
       <div className="flex items-center gap-2 text-sm text-we-ink min-w-0">
@@ -49,6 +82,7 @@ function TransferRow({ t }: { t: Transfer }) {
           <div className="h-full bg-we-teal transition-[width]" style={{ width: `${pct}%` }} />
         </div>
       )}
+      {detail && <div className="text-[11px] text-we-muted tabular-nums">{detail}</div>}
     </div>
   );
 }

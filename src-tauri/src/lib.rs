@@ -91,8 +91,39 @@ fn path_exists(path: String) -> bool {
 //
 // Files referenced by a project are content-addressed by streamed SHA-256 so a
 // collaborator can recognise media it already has and fetch what it lacks over
-// the WebRTC data path in fixed-size chunks. Chunks cross the IPC boundary as
-// base64 strings (compact vs. a JSON number array).
+// the WebRTC data path.
+//
+// Bytes move in BLOCKS (megabytes, not kilobytes) and cross the IPC boundary as
+// raw bodies via Tauri's `Request`/`Response` rather than base64 JSON. The old
+// base64-per-16-KiB path paid a 33% size inflation plus a JSON encode/decode on
+// every chunk, which is a large part of why a multi-GB VOD took hours.
+//
+// Every block is self-describing: byte 0 is the codec, the rest is the payload.
+// The sender tries deflate and keeps it only when the block actually shrinks, so
+// uncompressed assets (WAV, PNG sequences, subtitles, intermediate codecs) ride
+// compressed while already-compressed video skips the cost entirely.
+
+/// Block payload is verbatim file bytes.
+const MEDIA_CODEC_STORED: u8 = 0;
+/// Block payload is deflate-compressed file bytes.
+const MEDIA_CODEC_DEFLATE: u8 = 1;
+
+/// Decode a path passed through an IPC header. Header values must be visible
+/// ASCII, so the frontend sends the path URL-safe-base64'd to survive non-ASCII
+/// filenames.
+fn decode_header_path(request: &tauri::ipc::Request<'_>) -> Result<String, String> {
+    use base64::Engine;
+    let raw = request
+        .headers()
+        .get("x-weedit-path")
+        .ok_or("missing x-weedit-path header")?
+        .to_str()
+        .map_err(|e| format!("bad x-weedit-path header: {e}"))?;
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(raw.as_bytes())
+        .map_err(|e| format!("x-weedit-path is not base64: {e}"))?;
+    String::from_utf8(bytes).map_err(|e| format!("x-weedit-path is not utf-8: {e}"))
+}
 
 /// Streamed SHA-256 of a file, hex-encoded. Reads in 1 MiB blocks so hashing a
 /// multi-GB VOD doesn't load it all into memory.
@@ -123,26 +154,54 @@ fn file_size(path: String) -> Result<u64, String> {
     fs::metadata(&path).map(|m| m.len()).map_err(|e| format!("stat failed: {e}"))
 }
 
-/// Read `length` bytes at `offset` and return them base64-encoded. EOF yields a
-/// shorter (possibly empty) result.
+/// Read a transfer block: up to `length` bytes at `offset`, returned as a raw
+/// IPC body of `[codec][payload]`. EOF yields a shorter (possibly empty)
+/// payload. When `compress` is set the block is deflated, and the compressed
+/// form is kept only if it saves at least 5% — below that the receiver's inflate
+/// cost outweighs the bytes saved.
 #[tauri::command]
-async fn read_file_chunk(path: String, offset: u64, length: u32) -> Result<String, String> {
-    run_blocking("read_file_chunk", move || {
-        use base64::Engine;
+async fn read_media_block(
+    path: String,
+    offset: u64,
+    length: u32,
+    compress: bool,
+) -> Result<tauri::ipc::Response, String> {
+    run_blocking("read_media_block", move || {
         use std::io::{Read, Seek, SeekFrom};
         let mut file = fs::File::open(&path).map_err(|e| format!("open failed: {e}"))?;
         file.seek(SeekFrom::Start(offset)).map_err(|e| format!("seek failed: {e}"))?;
-        let mut buf = vec![0u8; length as usize];
+
+        // Read straight into a buffer that already has room for the codec byte,
+        // so the common (stored) path hands the bytes to the IPC layer without a
+        // second copy of a multi-MB block.
+        let mut buf = vec![0u8; length as usize + 1];
+        buf[0] = MEDIA_CODEC_STORED;
         let mut read = 0usize;
-        while read < buf.len() {
-            let n = file.read(&mut buf[read..]).map_err(|e| format!("read failed: {e}"))?;
+        while read + 1 < buf.len() {
+            let n = file.read(&mut buf[read + 1..]).map_err(|e| format!("read failed: {e}"))?;
             if n == 0 {
                 break;
             }
             read += n;
         }
-        buf.truncate(read);
-        Ok(base64::engine::general_purpose::STANDARD.encode(&buf))
+        buf.truncate(read + 1);
+
+        if compress && read > 0 {
+            use flate2::write::DeflateEncoder;
+            use flate2::Compression;
+            use std::io::Write;
+            let mut enc = DeflateEncoder::new(Vec::with_capacity(read / 2 + 64), Compression::fast());
+            enc.write_all(&buf[1..]).map_err(|e| format!("deflate failed: {e}"))?;
+            let packed = enc.finish().map_err(|e| format!("deflate failed: {e}"))?;
+            if packed.len() + packed.len() / 20 < read {
+                let mut out = Vec::with_capacity(packed.len() + 1);
+                out.push(MEDIA_CODEC_DEFLATE);
+                out.extend_from_slice(&packed);
+                return Ok(tauri::ipc::Response::new(out));
+            }
+        }
+
+        Ok(tauri::ipc::Response::new(buf))
     })
     .await
 }
@@ -167,27 +226,50 @@ fn rename_path(from: String, to: String) -> Result<(), String> {
     fs::rename(&from, &to).map_err(|e| format!("rename failed: {e}"))
 }
 
-/// Append a base64 chunk to a file (creating it + parent dirs on first write).
-/// Used by the receiving peer to assemble a fetched media file in its cache.
-#[tauri::command]
-async fn append_file_chunk(path: String, data_base64: String) -> Result<(), String> {
-    run_blocking("append_file_chunk", move || {
-        use base64::Engine;
-        use std::io::Write;
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(data_base64.as_bytes())
-            .map_err(|e| format!("base64 decode failed: {e}"))?;
-        if let Some(parent) = Path::new(&path).parent() {
-            fs::create_dir_all(parent).map_err(|e| format!("mkdir failed: {e}"))?;
+/// Append a received transfer block to a file (creating it + parent dirs on
+/// first write), inflating it first when the sender compressed it.
+///
+/// The block arrives as a raw IPC body of `[codec][payload]` with the
+/// destination path in the `x-weedit-path` header, and returns the number of
+/// file bytes written so the receiver tracks progress from what actually landed
+/// on disk rather than from what the sender claimed.
+///
+/// `command(async)` rather than `async fn` because a raw `Request` borrows from
+/// the invoke message; this still runs off the UI thread, so a multi-MB write
+/// never janks the editor.
+#[tauri::command(async)]
+fn append_media_block(request: tauri::ipc::Request<'_>) -> Result<u64, String> {
+    use std::borrow::Cow;
+    use std::io::Write;
+
+    let path = decode_header_path(&request)?;
+    let body = match request.body() {
+        tauri::ipc::InvokeBody::Raw(bytes) => bytes.as_slice(),
+        tauri::ipc::InvokeBody::Json(_) => return Err("expected a raw block body".into()),
+    };
+    let (&codec, payload) = body.split_first().ok_or("empty block")?;
+    let bytes: Cow<'_, [u8]> = match codec {
+        MEDIA_CODEC_STORED => Cow::Borrowed(payload),
+        MEDIA_CODEC_DEFLATE => {
+            let mut out = Vec::with_capacity(payload.len() * 4);
+            flate2::read::DeflateDecoder::new(payload)
+                .read_to_end(&mut out)
+                .map_err(|e| format!("inflate failed: {e}"))?;
+            Cow::Owned(out)
         }
-        let mut file = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-            .map_err(|e| format!("open failed: {e}"))?;
-        file.write_all(&bytes).map_err(|e| format!("write failed: {e}"))
-    })
-    .await
+        other => return Err(format!("unknown block codec {other}")),
+    };
+
+    if let Some(parent) = Path::new(&path).parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("mkdir failed: {e}"))?;
+    }
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|e| format!("open failed: {e}"))?;
+    file.write_all(&bytes).map_err(|e| format!("write failed: {e}"))?;
+    Ok(bytes.len() as u64)
 }
 
 #[derive(serde::Serialize)]
@@ -1490,8 +1572,8 @@ pub fn run() {
             path_exists,
             hash_file,
             file_size,
-            read_file_chunk,
-            append_file_chunk,
+            read_media_block,
+            append_media_block,
             remove_file,
             rename_path,
             list_directory,

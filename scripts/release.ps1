@@ -22,6 +22,10 @@
 #
 # Note: a release tag must point at a commit that exists on GitHub. If HEAD
 # isn't pushed yet, pass -Push (or push it yourself first).
+#
+# Note: if the working copy resolves onto a network share, the script maps that
+# share to a temporary drive letter and builds from there -- Node can't resolve
+# packages over a UNC path (see step 1b).
 
 [CmdletBinding()]
 param(
@@ -51,6 +55,58 @@ Assert-Command git  "Install Git."
 Assert-Command node "Install Node.js."
 Assert-Command npm  "Install Node.js."
 Assert-Command gh   "Install the GitHub CLI: https://cli.github.com/"
+
+# --- 1b. Build from a drive letter, never a UNC path ----------------------
+# When the working copy lives on a network share, Node resolves every realpath
+# to \\host\share\... -- and it does so even when the local path you ran from is
+# an ordinary C:\ folder that happens to be a mount onto that share. Vite's
+# config loader then bundles through file://host/... URLs and can't resolve the
+# `vite` package entry, so tauri's beforeBuildCommand (`npm run build`) dies
+# with "Failed to resolve entry for package vite" before anything is built.
+#
+# Mapping the share to a drive letter and building from there keeps Node on
+# drive-letter paths. An existing mapping for the same share is reused (and
+# left alone afterwards); one we create ourselves is temporary and removed on
+# the way out, including on failure.
+$script:MappedDrive = $null
+function Remove-TempDrive {
+    if ($script:MappedDrive) {
+        & net use $script:MappedDrive /delete /y *> $null
+        $script:MappedDrive = $null
+    }
+}
+trap { Remove-TempDrive; break }
+
+$realRoot = (& node -p "require('fs').realpathSync(process.cwd())").Trim()
+if ($realRoot -like '\\*') {
+    if ($realRoot -notmatch '^(\\\\[^\\]+\\[^\\]+)(\\.*)?$') {
+        throw "The repo resolves to a UNC path this script can't parse: $realRoot"
+    }
+    $shareRoot = $Matches[1]
+    $subPath   = $Matches[2]
+
+    $existing = Get-PSDrive -PSProvider FileSystem |
+        Where-Object { $_.DisplayRoot -eq $shareRoot } |
+        Select-Object -First 1
+    if ($existing) {
+        $letter = $existing.Name
+        Write-Host "==> Repo resolves to $realRoot; using existing ${letter}: mapping" -ForegroundColor Cyan
+    } else {
+        $letter = 68..90 | ForEach-Object { [char]$_ } |
+            Where-Object { -not (Test-Path "${_}:\") } |
+            Select-Object -First 1
+        if (-not $letter) { throw "No free drive letter available to map $shareRoot onto." }
+        Write-Host "==> Repo resolves to $realRoot; mapping it to ${letter}: for the build" -ForegroundColor Cyan
+        # `net use` rather than New-PSDrive: the drive has to be visible to the
+        # child processes (npm, tauri, cargo), not just this PowerShell session.
+        & net use "${letter}:" $shareRoot /persistent:no | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Failed to map $shareRoot to ${letter}:" }
+        $script:MappedDrive = "${letter}:"
+    }
+
+    $RepoRoot = "${letter}:$subPath"
+    Set-Location $RepoRoot
+}
 
 # Signing key. Prefer one already in the environment; otherwise load the key
 # file's contents into the env var Tauri's build reads.
@@ -165,6 +221,7 @@ $assets | ForEach-Object { Write-Host "    $_" }
 
 if ($DryRun) {
     Write-Host "==> Dry run: built + signed, latest.json written. Not publishing." -ForegroundColor Yellow
+    Remove-TempDrive
     exit 0
 }
 
@@ -192,4 +249,5 @@ if ($releaseExists) {
     if ($LASTEXITCODE -ne 0) { throw "gh release create failed." }
 }
 
+Remove-TempDrive
 Write-Host "==> Done. Released $version at https://github.com/$repo/releases/tag/$tag" -ForegroundColor Green

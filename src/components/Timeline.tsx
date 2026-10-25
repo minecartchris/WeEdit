@@ -9,6 +9,7 @@ import {
   Plus,
   Redo2,
   RotateCcw,
+  Tag,
   Scissors,
   Search,
   Trash2,
@@ -271,6 +272,8 @@ function TimelineToolbar({
   const selectedCount = useEditor((s) => s.selectedClipIds.length);
   const snapPlayhead = usePrefs((s) => s.snapPlayhead);
   const setSnapPlayhead = usePrefs((s) => s.setSnapPlayhead);
+  const autoLabelAudioTracks = useEditor((s) => s.autoLabelAudioTracks);
+  const audioTrackCount = useEditor((s) => s.tracks.filter((t) => t.kind === "audio").length);
 
   return (
     <div className="h-11 shrink-0 flex items-center gap-1 px-3 border-b border-we-border">
@@ -290,6 +293,14 @@ function TimelineToolbar({
         <MenuItem icon={VideoIcon} onSelect={() => onAddTrack("video")}>Video track</MenuItem>
         <MenuItem icon={Music}     onSelect={() => onAddTrack("audio")}>Audio track</MenuItem>
         <MenuItem icon={Type}      onSelect={() => onAddTrack("text")}>Text track</MenuItem>
+        <MenuSeparator />
+        <MenuItem
+          icon={Tag}
+          disabled={audioTrackCount === 0}
+          onSelect={() => autoLabelAudioTracks()}
+        >
+          Auto-label audio tracks
+        </MenuItem>
       </Menu>
 
       <Sep />
@@ -530,6 +541,7 @@ function TrackHeader({ track }: { track: Track }) {
   const renameTrack = useEditor((s) => s.renameTrack);
   const removeTrack = useEditor((s) => s.removeTrack);
   const moveTrack = useEditor((s) => s.moveTrack);
+  const autoLabel = useEditor((s) => s.autoLabelAudioTracks);
   const isFirst = useEditor((s) => s.tracks[0]?.id === track.id);
   const isLast = useEditor((s) => s.tracks[s.tracks.length - 1]?.id === track.id);
 
@@ -561,6 +573,11 @@ function TrackHeader({ track }: { track: Track }) {
           )}
         >
           <MenuItem onSelect={onRename}>Rename…</MenuItem>
+          {track.kind === "audio" && (
+            <MenuItem icon={Tag} onSelect={() => autoLabel(track.id)}>
+              Auto-label from audio
+            </MenuItem>
+          )}
           <MenuItem onSelect={() => setMuted(track.id, !track.muted)}>
             {track.muted ? "Unmute" : "Mute"}
           </MenuItem>

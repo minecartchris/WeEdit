@@ -231,6 +231,115 @@ export function clipEdgeAnchors(
   return out;
 }
 
+// ── Automatic audio-track labelling ─────────────────────────────────────────
+//
+// "Audio 1 / Audio 2 / Audio 3" says nothing, and a multi-track OBS or Twitch
+// capture is exactly where it matters: those recordings carry a stream title per
+// source ("Game", "Mic/Aux", "Desktop Audio"), which ffprobe hands us on import
+// as AudioTrackInfo.title. So a track can almost always name itself from the
+// audio actually sitting on it.
+
+/** Longest auto-generated track name, so the track header can still show it. */
+const TRACK_LABEL_MAX = 22;
+
+/** Common ISO-639 tags worth spelling out; anything else is upper-cased as-is. */
+const LANGUAGE_NAMES: Record<string, string> = {
+  eng: "English",
+  spa: "Spanish",
+  fra: "French",
+  fre: "French",
+  deu: "German",
+  ger: "German",
+  jpn: "Japanese",
+  kor: "Korean",
+  por: "Portuguese",
+  rus: "Russian",
+  zho: "Chinese",
+  chi: "Chinese",
+  nld: "Dutch",
+  dut: "Dutch",
+  ita: "Italian",
+  pol: "Polish",
+  swe: "Swedish",
+};
+
+function tidyLabel(raw: string, stripExtension = false): string {
+  // Only a file name loses its extension — a stream title like "Track.2" is
+  // the name the recorder gave it, dot and all.
+  const base = stripExtension ? raw.replace(/\.[a-z0-9]{1,5}$/i, "") : raw;
+  const cleaned = base
+    .replace(/[_]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!cleaned) return "";
+  return cleaned.length > TRACK_LABEL_MAX
+    ? `${cleaned.slice(0, TRACK_LABEL_MAX - 1).trimEnd()}\u2026`
+    : cleaned;
+}
+
+/** The label one audio clip suggests for the track it sits on. */
+function labelForAudioClip(clip: MediaClip, media: MediaItem[]): string {
+  const m = media.find((mm) => mm.id === clip.mediaId);
+  if (!m) return "";
+  const clipMuted = clip.mutedTracks ?? [];
+  const live = (m.audioTracks ?? []).filter(
+    (t) => !t.muted && t.filepath && !clipMuted.includes(t.index),
+  );
+  // Only a single live stream names the track after that stream — with two or
+  // more audible at once the track is a mix, and the source file's name is the
+  // honest description of it.
+  if (live.length === 1) {
+    const only = live[0];
+    if (only.title) return tidyLabel(only.title);
+    if (only.language) {
+      const key = only.language.toLowerCase();
+      return tidyLabel(LANGUAGE_NAMES[key] ?? only.language.toUpperCase());
+    }
+  }
+  return tidyLabel(m.name, true);
+}
+
+/**
+ * The name a track would give itself from its contents, or null when there's
+ * nothing to go on (an empty track, or media that's gone missing). When the
+ * track holds clips that suggest different names, the most common one wins.
+ */
+export function autoTrackLabel(
+  track: Track,
+  clips: Record<string, Clip>,
+  media: MediaItem[],
+): string | null {
+  const votes = new Map<string, number>();
+  for (const id of track.clipIds) {
+    const c = clips[id];
+    if (!c || c.kind !== "audio") continue;
+    const label = labelForAudioClip(c as MediaClip, media);
+    if (label) votes.set(label, (votes.get(label) ?? 0) + 1);
+  }
+  if (votes.size === 0) return null;
+  let best: string | null = null;
+  let bestCount = 0;
+  // Map iteration is insertion-ordered, so a tie keeps the earliest clip's
+  // label — stable across runs rather than depending on object key order.
+  for (const [label, count] of votes) {
+    if (count > bestCount) {
+      best = label;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+
+/** Appends " 2", " 3"… until the name isn't already taken. */
+export function uniqueTrackName(name: string, taken: ReadonlySet<string>): string {
+  if (!taken.has(name)) return name;
+  for (let i = 2; i < 999; i++) {
+    const candidate = `${name} ${i}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+  return name;
+}
+
 /**
  * The effective volume of a clip at a timeline time. With no volume keyframes
  * this is the clip's static `volume`; otherwise the surrounding keyframes are

@@ -5,10 +5,12 @@ import {
   MAX_CLIP_SPEED,
   MIN_CLIP_DURATION,
   MIN_CLIP_SPEED,
+  autoTrackLabel,
   clampClipStart,
   isMediaCompatibleWithTrack,
   resolveTransform,
   resolveVolume,
+  uniqueTrackName,
 } from "@/lib/clips";
 import type {
   AspectRatio,
@@ -115,6 +117,12 @@ interface EditorState {
   addTrack: (kind: TrackKind) => string;
   removeTrack: (id: string) => void;
   renameTrack: (id: string, name: string) => void;
+  /**
+   * Name audio tracks after the audio on them (stream title, else language,
+   * else the source file). Pass a track id for just that one, or nothing for
+   * every audio track. Returns how many were renamed.
+   */
+  autoLabelAudioTracks: (trackId?: string) => number;
   setTrackVolume: (id: string, volume: number) => void;
   setTrackMuted: (id: string, muted: boolean) => void;
   /** Move a track up/down its render order among same-kind tracks (z-index). */
@@ -368,6 +376,41 @@ export const useEditor = create<EditorState>((set, get) => ({
         selectedClipIds: s.selectedClipIds.filter((cid) => !removedClipIds.has(cid)),
       });
     }),
+  autoLabelAudioTracks: (trackId) => {
+    let renamed = 0;
+    set((s) => {
+      const targets = s.tracks.filter(
+        (t) => t.kind === "audio" && (trackId == null || t.id === trackId),
+      );
+      if (targets.length === 0) return s;
+
+      // Tracks we're not touching keep their names, so a generated one never
+      // collides with a name the user typed themselves.
+      const targetIds = new Set(targets.map((t) => t.id));
+      const taken = new Set(s.tracks.filter((t) => !targetIds.has(t.id)).map((t) => t.name));
+
+      const next = new Map<string, string>();
+      for (const t of targets) {
+        const label = autoTrackLabel(t, s.clips, s.media);
+        // Nothing to go on (empty track, missing media) — leave it alone rather
+        // than renaming it to something arbitrary.
+        if (!label) {
+          taken.add(t.name);
+          continue;
+        }
+        const name = uniqueTrackName(label, taken);
+        taken.add(name);
+        if (name !== t.name) next.set(t.id, name);
+      }
+
+      renamed = next.size;
+      if (renamed === 0) return s;
+      return withHistory(s, {
+        tracks: s.tracks.map((t) => (next.has(t.id) ? { ...t, name: next.get(t.id)! } : t)),
+      });
+    });
+    return renamed;
+  },
   renameTrack: (id, name) =>
     set((s) =>
       withHistory(s, {
@@ -639,10 +682,19 @@ export const useEditor = create<EditorState>((set, get) => ({
         rotation: 0,
         tilt: 0,
       };
+      // Name it after the audio it holds right away — this is where the
+      // "Audio 1/2/3" pile-up comes from, and the metadata is already here.
+      const detachedLabel = autoTrackLabel(
+        { id: trackId, kind: "audio", name: "", volume: 1, muted: false, zIndex: 0, clipIds: [audioClipId] },
+        { ...s.clips, [audioClipId]: audioClip },
+        s.media,
+      );
       const newTrack: Track = {
         id: trackId,
         kind: "audio",
-        name: nextTrackName(s.tracks, "audio"),
+        name: detachedLabel
+          ? uniqueTrackName(detachedLabel, new Set(s.tracks.map((t) => t.name)))
+          : nextTrackName(s.tracks, "audio"),
         volume: 1,
         muted: false,
         zIndex: nextZIndex(s.tracks, "audio"),

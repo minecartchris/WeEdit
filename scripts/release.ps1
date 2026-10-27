@@ -12,8 +12,10 @@
 #   - Your minisign PRIVATE key in an env var so the updater artifacts get
 #     signed (the matching public key is already in src-tauri/tauri.conf.json):
 #         $env:TAURI_SIGNING_PRIVATE_KEY = Get-Content path\to\weedit.key -Raw
-#     If the key has a password, also set:
+#     The key is encrypted, so tauri needs its password. Either set
 #         $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = "..."
+#     or run this script from an interactive terminal and answer the prompt.
+#     Without one of those, signing cannot run (the script checks up front).
 #
 # Usage
 #   powershell -ExecutionPolicy Bypass -File scripts/release.ps1
@@ -119,11 +121,37 @@ if (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
     }
 }
 
-# This key has no password. Tauri's build needs the password var to EXIST (as an
-# empty string) or it fails with a misleading 'incorrect password' error -- so
-# default it to empty unless the caller set a real password.
+# The updater signing key is encrypted (rsign/minisign scrypt), so tauri has to
+# decrypt it to sign the updater artifacts. It takes the password from
+# $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD and prompts on the console when that
+# variable is absent.
+#
+# This used to "default it to empty" with `$env:... = ""`, which is a no-op:
+# Windows cannot store an empty environment variable, and assigning an empty
+# string DELETES it (Test-Path still reports $false afterwards). So the release
+# has always depended on answering tauri's interactive prompt -- fine from a
+# terminal, fatal anywhere non-interactive, where tauri prints "expect a prompt
+# for password", finds no console and exits. That happened *after* the full
+# release build, throwing away a couple of minutes of compilation and leaving
+# the patched tauri.conf.json behind.
+#
+# So decide it up front, before anything is built.
 if (-not (Test-Path Env:\TAURI_SIGNING_PRIVATE_KEY_PASSWORD)) {
-    $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = ""
+    if ([Environment]::UserInteractive -and -not [Console]::IsInputRedirected) {
+        Write-Host "==> No TAURI_SIGNING_PRIVATE_KEY_PASSWORD set; tauri will prompt for the key password at the signing step." -ForegroundColor Yellow
+    } else {
+        throw @"
+The updater signing key is encrypted and no password is available, and this
+session has no console for tauri to prompt on -- so signing would fail after
+the whole build. Set the password first:
+
+    `$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = '<key password>'
+
+If the key's password is blank, Windows cannot represent that as an
+environment variable, so run this script from an interactive terminal and
+press Enter at tauri's prompt instead.
+"@
+    }
 }
 
 & gh auth status *> $null

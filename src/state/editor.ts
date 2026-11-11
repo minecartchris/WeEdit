@@ -246,7 +246,7 @@ export const useEditor = create<EditorState>((set, get) => ({
   isPlaying: false,
   selectedClipIds: [],
   pxPerSec: 8,
-  libraryFilter: "project-bin",
+  libraryFilter: "backgrounds",
   dragSession: null,
   hoverTrackId: null,
   projectPath: null,

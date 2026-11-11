@@ -13,7 +13,7 @@ import type { MediaItem } from "@/types";
 
 const META: Record<LibraryCategory, { title: string; blurb: string }> = {
   uploads: { title: "Uploads", blurb: "Your own video, image, and audio files — kept across sessions." },
-  backgrounds: { title: "Backgrounds", blurb: "Background images & loops you reuse across projects." },
+  backgrounds: { title: "Universal", blurb: "Files you keep across every project — music, outros, images, and more." },
   extras: { title: "Extras", blurb: "Stickers, overlays, and other extras you upload." },
   transitions: { title: "Transitions", blurb: "Transition clips/overlays you keep on hand." },
 };

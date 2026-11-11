@@ -28,6 +28,7 @@ const DEFAULTS: UiPrefs = {
   zoomToPlayhead: false,
   sidebarLabels: true,
   snapPlayhead: true,
+  keyframeEditorOpen: true,
 };
 
 interface PrefsState extends UiPrefs {
@@ -46,6 +47,7 @@ interface PrefsState extends UiPrefs {
   setZoomToPlayhead: (on: boolean) => void;
   setSidebarLabels: (on: boolean) => void;
   setSnapPlayhead: (on: boolean) => void;
+  setKeyframeEditorOpen: (on: boolean) => void;
 }
 
 // Apply the theme to <html>: toggles the `dark` class Tailwind keys off and
@@ -97,6 +99,7 @@ export const usePrefs = create<PrefsState>((set, get) => ({
         zoomToPlayhead: ui.zoomToPlayhead ?? DEFAULTS.zoomToPlayhead,
         sidebarLabels: ui.sidebarLabels ?? DEFAULTS.sidebarLabels,
         snapPlayhead: ui.snapPlayhead ?? DEFAULTS.snapPlayhead,
+        keyframeEditorOpen: ui.keyframeEditorOpen ?? DEFAULTS.keyframeEditorOpen,
       };
       set({ ...merged, loaded: true });
       applyTheme(merged.theme);
@@ -148,5 +151,9 @@ export const usePrefs = create<PrefsState>((set, get) => ({
   setSnapPlayhead: (snapPlayhead) => {
     set({ snapPlayhead });
     void persist({ snapPlayhead });
+  },
+  setKeyframeEditorOpen: (keyframeEditorOpen) => {
+    set({ keyframeEditorOpen });
+    void persist({ keyframeEditorOpen });
   },
 }));

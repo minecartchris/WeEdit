@@ -26,6 +26,7 @@ interface SidebarItem {
 }
 
 const items: SidebarItem[] = [
+  { key: "backgrounds",  label: "Universal",    icon: Layers },
   { key: "project-bin",  label: "Project bin",  icon: Box },
   { key: "uploads",      label: "Uploads",      icon: UploadCloud },
   { key: "twitch",       label: "Twitch",       icon: Tv },
@@ -37,7 +38,6 @@ const items: SidebarItem[] = [
   { key: "text",         label: "Text",         icon: Type },
   { key: "transitions",  label: "Transitions",  icon: Repeat },
   { key: "extras",       label: "Extras",       icon: Smile },
-  { key: "backgrounds",  label: "Backgrounds",  icon: Layers },
 ];
 
 export function Sidebar() {

@@ -255,6 +255,8 @@ export interface UiPrefs {
   sidebarLabels: boolean;
   /** The playhead snaps to clip edges (and clips snap to the playhead). */
   snapPlayhead: boolean;
+  /** Whether the keyframe editor panel below the preview is expanded. */
+  keyframeEditorOpen: boolean;
 }
 
 export interface ProjectMeta {

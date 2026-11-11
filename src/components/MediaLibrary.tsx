@@ -307,7 +307,7 @@ function LibraryView({
   }
   if (tab === "transitions") return <StubPanel title="Transitions" hint="Cut, fade, dissolve (next slice)." />;
   if (tab === "extras")      return <StubPanel title="Extras"      hint="Stickers and emoji overlays (later)." />;
-  if (tab === "backgrounds") return <StubPanel title="Backgrounds" hint="Solid colors and gradient backdrops (later)." />;
+  if (tab === "backgrounds") return <StubPanel title="Universal" hint="Files you keep across every project." />;
 
   if (items.length === 0) {
     return <EmptyDropzone dragOver={dragOver} onClick={onPick} />;

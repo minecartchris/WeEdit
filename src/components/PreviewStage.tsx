@@ -144,14 +144,16 @@ function VideoLayer({
   const useExtractedAudio = audioTracks.length > 0 && mutedTracks.length > 0;
   const speed = clip.speed ?? 1;
   const pitchPreserved = clip.pitchPreserved ?? true;
+  // Preview-only skim rate from the transport slider (never affects export).
+  const previewRate = useEditor((s) => s.previewRate);
 
   // Playback speed + whether pitch follows it.
   useEffect(() => {
     const v = ref.current;
     if (!v) return;
-    v.playbackRate = speed;
+    v.playbackRate = mediaRate(speed, previewRate);
     (v as HTMLMediaElement & { preservesPitch?: boolean }).preservesPitch = pitchPreserved;
-  }, [speed, pitchPreserved]);
+  }, [speed, pitchPreserved, previewRate]);
 
   // Sync currentTime to the source position for this playhead (speed-scaled).
   // While playing, let the element run on its own clock and only correct a LARGE
@@ -163,7 +165,7 @@ function VideoLayer({
     if (!v) return;
     const target = clip.sourceInSec + (playheadSec - clip.startSec) * speed;
     if (!Number.isFinite(target)) return;
-    if (Math.abs(v.currentTime - target) > (isPlaying ? 0.5 : 0.08)) {
+    if (Math.abs(v.currentTime - target) > (isPlaying ? 0.5 * Math.max(1, previewRate) : 0.08)) {
       try {
         v.currentTime = target;
       } catch {
@@ -256,20 +258,22 @@ function ExtractedAudioTrack({
   const effectiveVolume = muted ? 0 : trackVolume;
   const speed = clip.speed ?? 1;
   const pitchPreserved = clip.pitchPreserved ?? true;
+  // Preview-only skim rate from the transport slider (never affects export).
+  const previewRate = useEditor((s) => s.previewRate);
 
   useEffect(() => {
     const a = ref.current;
     if (!a) return;
-    a.playbackRate = speed;
+    a.playbackRate = mediaRate(speed, previewRate);
     (a as HTMLMediaElement & { preservesPitch?: boolean }).preservesPitch = pitchPreserved;
-  }, [speed, pitchPreserved]);
+  }, [speed, pitchPreserved, previewRate]);
 
   useEffect(() => {
     const a = ref.current;
     if (!a) return;
     const target = clip.sourceInSec + (playheadSec - clip.startSec) * speed;
     if (!Number.isFinite(target)) return;
-    if (Math.abs(a.currentTime - target) > (isPlaying ? 0.5 : 0.08)) {
+    if (Math.abs(a.currentTime - target) > (isPlaying ? 0.5 * Math.max(1, previewRate) : 0.08)) {
       try {
         a.currentTime = target;
       } catch {
@@ -435,20 +439,22 @@ function MuxedAudioLayer({
   const ref = useRef<HTMLAudioElement>(null);
   const speed = clip.speed ?? 1;
   const pitchPreserved = clip.pitchPreserved ?? true;
+  // Preview-only skim rate from the transport slider (never affects export).
+  const previewRate = useEditor((s) => s.previewRate);
 
   useEffect(() => {
     const a = ref.current;
     if (!a) return;
-    a.playbackRate = speed;
+    a.playbackRate = mediaRate(speed, previewRate);
     (a as HTMLMediaElement & { preservesPitch?: boolean }).preservesPitch = pitchPreserved;
-  }, [speed, pitchPreserved]);
+  }, [speed, pitchPreserved, previewRate]);
 
   useEffect(() => {
     const a = ref.current;
     if (!a) return;
     const target = clip.sourceInSec + (playheadSec - clip.startSec) * speed;
     if (!Number.isFinite(target)) return;
-    if (Math.abs(a.currentTime - target) > (isPlaying ? 0.5 : 0.08)) {
+    if (Math.abs(a.currentTime - target) > (isPlaying ? 0.5 * Math.max(1, previewRate) : 0.08)) {
       try {
         a.currentTime = target;
       } catch {
@@ -790,4 +796,10 @@ function collectActiveAudios(
     }
   }
   return out;
+}
+
+// Element playbackRate = clip speed x preview skim rate, clamped to the range
+// Chromium/WebView2 accepts (0.0625-16) so extreme combos don't throw.
+function mediaRate(clipSpeed: number, previewRate: number): number {
+  return Math.min(16, Math.max(0.0625, clipSpeed * previewRate));
 }

@@ -117,6 +117,8 @@ export function Preview() {
           </button>
         </div>
 
+        <SpeedSlider />
+
         <button onClick={toggleFullscreen} className="we-btn-ghost p-2" title="Fullscreen">
           <Maximize className="w-5 h-5" />
         </button>
@@ -140,6 +142,60 @@ function PlayheadProgress() {
   return (
     <div className="h-1.5 bg-we-hover relative">
       <div className="absolute inset-y-0 left-0 bg-we-teal" style={{ width: `${pct}%` }} />
+    </div>
+  );
+}
+
+// Preview playback-speed slider for skimming long footage (issue #45).
+// Log scale from 0.1x (far left) to 4x (far right) so 1x sits a bit past the
+// middle and both slow-mo and fast skims get usable resolution. Snaps to 1x
+// near the center; double-click resets. Preview only — exports are unaffected.
+const MIN_RATE = 0.1;
+const MAX_RATE = 4;
+const STEPS = 1000;
+const rateToPos = (r: number) =>
+  Math.round((Math.log(r / MIN_RATE) / Math.log(MAX_RATE / MIN_RATE)) * STEPS);
+const posToRate = (p: number) => MIN_RATE * Math.pow(MAX_RATE / MIN_RATE, p / STEPS);
+
+function SpeedSlider() {
+  const rate = useEditor((s) => s.previewRate);
+  const setRate = useEditor((s) => s.setPreviewRate);
+
+  const onChange = (pos: number) => {
+    let r = posToRate(pos);
+    if (Math.abs(r - 1) < 0.06) r = 1;
+    // Two decimals below 1x, one above, so the label stays readable.
+    r = r < 1 ? Math.round(r * 100) / 100 : Math.round(r * 10) / 10;
+    setRate(r);
+  };
+
+  const label = rate < 1 ? rate.toFixed(2).replace(/0$/, "") : rate.toFixed(1);
+
+  return (
+    <div
+      className="flex items-center gap-2 mr-2"
+      title="Preview speed (0.1x–4x). Double-click to reset to 1x."
+    >
+      <input
+        type="range"
+        min={0}
+        max={STEPS}
+        step={1}
+        value={rateToPos(rate)}
+        onChange={(e) => onChange(Number(e.target.value))}
+        onDoubleClick={() => setRate(1)}
+        // Keep Space/arrow shortcuts working after dragging the slider.
+        onPointerUp={(e) => e.currentTarget.blur()}
+        className="w-28 accent-we-teal cursor-pointer"
+        aria-label="Preview playback speed"
+      />
+      <button
+        onClick={() => setRate(1)}
+        className={`text-xs tabular-nums w-10 text-right ${rate === 1 ? "text-we-muted" : "text-we-teal"}`}
+        title="Reset to 1x"
+      >
+        {label}x
+      </button>
     </div>
   );
 }

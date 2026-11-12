@@ -34,7 +34,8 @@ export function usePlayback() {
         if (end > totalDur) totalDur = end;
       }
 
-      const next = state.playheadSec + dt;
+      // previewRate scales timeline time for skimming (slider in the transport).
+      const next = state.playheadSec + dt * state.previewRate;
       if (totalDur > 0 && next >= totalDur) {
         state.setPlayhead(totalDur);
         // Stop at end. User can rewind / hit play again.

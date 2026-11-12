@@ -68,6 +68,8 @@ interface EditorState {
   /** Current playhead in seconds. */
   playheadSec: number;
   isPlaying: boolean;
+  /** Preview-only playback rate for skimming (0.1x-4x). Not saved, not exported. */
+  previewRate: number;
 
   /** Selected clip ids. */
   selectedClipIds: string[];
@@ -96,6 +98,7 @@ interface EditorState {
   // ── Playhead / playback / zoom / selection (transient — no history)
   setPlayhead: (sec: number) => void;
   togglePlay: () => void;
+  setPreviewRate: (rate: number) => void;
   setZoom: (pxPerSec: number) => void;
   selectClip: (id: string | null, additive?: boolean) => void;
   clearSelection: () => void;
@@ -244,6 +247,7 @@ export const useEditor = create<EditorState>((set, get) => ({
   clips: {},
   playheadSec: 0,
   isPlaying: false,
+  previewRate: 1,
   selectedClipIds: [],
   pxPerSec: 8,
   libraryFilter: "backgrounds",
@@ -258,6 +262,8 @@ export const useEditor = create<EditorState>((set, get) => ({
   // Transient
   setPlayhead: (sec) => set({ playheadSec: Math.max(0, sec) }),
   togglePlay: () => set((s) => ({ isPlaying: !s.isPlaying })),
+  setPreviewRate: (rate) =>
+    set({ previewRate: Number.isFinite(rate) ? Math.max(0.1, Math.min(4, rate)) : 1 }),
   setZoom: (pxPerSec) => set({ pxPerSec: Math.max(0.05, Math.min(200, pxPerSec)) }),
   selectClip: (id, additive = false) =>
     set((s) => {

@@ -59,6 +59,10 @@ export const SHORTCUT_COMMANDS: ShortcutCommand[] = [
   { id: "jump-end", label: "Jump to end", defaultBinding: "end", run: jumpToEnd },
   { id: "frame-back", label: "Step back one frame", defaultBinding: "arrowleft", run: () => stepFrame(-1) },
   { id: "frame-forward", label: "Step forward one frame", defaultBinding: "arrowright", run: () => stepFrame(1) },
+  // Skimming (#47): nudge the preview speed without reaching for the slider.
+  { id: "speed-up", label: "Preview speed +0.1x", defaultBinding: "]", run: () => useEditor.getState().nudgePreviewRate(0.1) },
+  { id: "speed-down", label: "Preview speed -0.1x", defaultBinding: "[", run: () => useEditor.getState().nudgePreviewRate(-0.1) },
+  { id: "speed-reset", label: "Preview speed reset to 1x", defaultBinding: "\\", run: () => useEditor.getState().setPreviewRate(1) },
   {
     id: "toggle-snap",
     label: "Toggle snapping",

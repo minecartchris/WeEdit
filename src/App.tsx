@@ -1,6 +1,5 @@
 import { useEffect } from "react";
 import { Inspector } from "@/components/Inspector";
-import { KeyframeEditor } from "@/components/KeyframeEditor";
 import { MediaLibrary } from "@/components/MediaLibrary";
 import { MediaSyncIndicator } from "@/components/MediaSyncIndicator";
 import { Preview } from "@/components/Preview";
@@ -72,7 +71,6 @@ export default function App() {
           <Inspector />
         </div>
       </main>
-      <KeyframeEditor />
       <Splitter
         axis="y"
         invert

@@ -1,4 +1,6 @@
-import { AudioLines, Diamond, MousePointerSquareDashed, SlidersHorizontal, Volume2, VolumeX, X } from "lucide-react";
+import { AudioLines, Diamond, MousePointerSquareDashed, Pencil, SlidersHorizontal, Volume2, VolumeX, X } from "lucide-react";
+import { useState } from "react";
+import { KeyframesTab } from "@/components/KeyframeEditor";
 import { NumberField } from "@/components/ui/NumberField";
 import {
   KEYFRAME_EPSILON,
@@ -8,6 +10,7 @@ import {
   MIN_CLIP_SPEED,
   MIN_SCALE,
   TEXT_CHAR_LIMIT,
+  audioStreamName,
   clampCropPct,
   pctToPx,
   previousClipOnTrack,
@@ -33,17 +36,51 @@ export function Inspector() {
     return s.clips[s.selectedClipIds[0]] ?? null;
   });
   const selectedCount = useEditor((s) => s.selectedClipIds.length);
+  const [tab, setTab] = useState<"properties" | "keyframes">("properties");
 
   return (
     <aside className="h-full w-full flex flex-col bg-we-panel border-l border-we-border min-w-0">
-      <div className="h-12 shrink-0 flex items-center gap-2 px-4 border-b border-we-border">
-        <SlidersHorizontal className="w-4 h-4 text-we-teal" />
-        <span className="text-sm font-medium text-we-ink">Properties</span>
+      <div className="h-12 shrink-0 flex items-end gap-1 px-2 border-b border-we-border" role="tablist">
+        <InspectorTab icon={SlidersHorizontal} label="Properties" active={tab === "properties"} onClick={() => setTab("properties")} />
+        <InspectorTab icon={Diamond} label="Keyframes" active={tab === "keyframes"} onClick={() => setTab("keyframes")} />
       </div>
       <div className="flex-1 overflow-auto">
-        {clip ? <ClipInspector clip={clip} /> : <Empty count={selectedCount} />}
+        {tab === "keyframes" ? (
+          <KeyframesTab clip={clip} />
+        ) : clip ? (
+          <ClipInspector clip={clip} />
+        ) : (
+          <Empty count={selectedCount} />
+        )}
       </div>
     </aside>
+  );
+}
+
+function InspectorTab({
+  icon: Icon,
+  label,
+  active,
+  onClick,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      role="tab"
+      aria-selected={active}
+      onClick={onClick}
+      className={[
+        "h-10 inline-flex items-center gap-2 px-3 text-sm font-medium border-b-2 -mb-px transition-colors",
+        active ? "border-we-teal text-we-ink" : "border-transparent text-we-muted hover:text-we-ink",
+      ].join(" ")}
+    >
+      <Icon className={["w-4 h-4", active ? "text-we-teal" : ""].join(" ")} />
+      {label}
+    </button>
   );
 }
 
@@ -448,6 +485,7 @@ function MediaProps({ clip }: { clip: MediaClip }) {
   const playheadSec = useEditor((s) => s.playheadSec);
   const volumeAtPlayhead = resolveVolume(clip, playheadSec);
   const muted = clip.mutedTracks ?? [];
+  const setStreamName = useEditor((s) => s.setMediaAudioTrackName);
   const toggleTrackMute = (index: number) => {
     const next = muted.includes(index) ? muted.filter((i) => i !== index) : [...muted, index];
     pushHistory();
@@ -527,10 +565,16 @@ function MediaProps({ clip }: { clip: MediaClip }) {
               label={trackDisplayName(t)}
               muted={muted.includes(t.index)}
               onToggle={() => toggleTrackMute(t.index)}
+              onRename={() => {
+                const current = audioStreamName(t);
+                const next = window.prompt(`Name for track ${t.index + 1} (e.g. Mic, Game, Discord)`, current);
+                if (next != null) setStreamName(media.id, t.index, next);
+              }}
             />
           ))}
           <div className="text-[10px] text-we-muted leading-4">
             Mutes only this clip — copies of the same media stay independent.
+            Names apply to every clip of this file and are what Auto-label uses.
           </div>
         </div>
       )}
@@ -624,17 +668,34 @@ function TextProps({ clip }: { clip: TextClip }) {
   );
 }
 
-function TrackMuteRow({ label, muted, onToggle }: { label: string; muted: boolean; onToggle: () => void }) {
+function TrackMuteRow({
+  label,
+  muted,
+  onToggle,
+  onRename,
+}: {
+  label: string;
+  muted: boolean;
+  onToggle: () => void;
+  onRename: () => void;
+}) {
   return (
-    <button
-      onClick={onToggle}
-      className="flex items-center gap-2 px-2 py-1 rounded text-xs hover:bg-we-hover text-left"
-    >
-      {muted ? <VolumeX className="w-4 h-4 text-we-muted" /> : <Volume2 className="w-4 h-4 text-we-teal" />}
-      <span className={["flex-1 truncate", muted ? "text-we-muted line-through" : "text-we-ink"].join(" ")}>
-        {label}
-      </span>
-    </button>
+    <div className="group flex items-center rounded hover:bg-we-hover">
+      <button onClick={onToggle} className="flex-1 min-w-0 flex items-center gap-2 px-2 py-1 text-xs text-left">
+        {muted ? <VolumeX className="w-4 h-4 text-we-muted" /> : <Volume2 className="w-4 h-4 text-we-teal" />}
+        <span className={["flex-1 truncate", muted ? "text-we-muted line-through" : "text-we-ink"].join(" ")}>
+          {label}
+        </span>
+      </button>
+      <button
+        onClick={onRename}
+        className="p-1 mr-1 rounded text-we-muted hover:text-we-ink opacity-60 group-hover:opacity-100"
+        title="Rename this audio track"
+        aria-label={`Rename ${label}`}
+      >
+        <Pencil className="w-3.5 h-3.5" />
+      </button>
+    </div>
   );
 }
 
@@ -651,8 +712,8 @@ const FONT_OPTIONS = [
 
 function trackDisplayName(t: AudioTrackInfo): string {
   const parts: string[] = [`Track ${t.index + 1}`];
-  if (t.title) parts.push(t.title);
-  if (t.language) parts.push(`(${t.language})`);
+  const named = audioStreamName(t);
+  if (named) parts.push(named);
   if (t.codec || t.channels) {
     const tech = [t.codec, t.channels ? `${t.channels}ch` : null].filter(Boolean).join(" · ");
     if (tech) parts.push(`· ${tech}`);

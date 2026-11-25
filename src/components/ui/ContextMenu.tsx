@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { type LucideIcon } from "lucide-react";
 
@@ -15,6 +15,9 @@ interface ContextMenuProps {
 }
 
 const VIEWPORT_PADDING = 8;
+
+/** Lets an item close its menu once it has run. */
+const CloseContext = createContext<() => void>(() => {});
 
 export function ContextMenu({ x, y, onClose, children }: ContextMenuProps) {
   const panelRef = useRef<HTMLDivElement>(null);
@@ -85,7 +88,7 @@ export function ContextMenu({ x, y, onClose, children }: ContextMenuProps) {
         visibility: pos.ready ? "visible" : "hidden",
       }}
     >
-      {children}
+      <CloseContext.Provider value={onClose}>{children}</CloseContext.Provider>
     </div>,
     document.body,
   );
@@ -108,6 +111,7 @@ export function ContextMenuItem({
   disabled,
   shortcut,
 }: ContextMenuItemProps) {
+  const close = useContext(CloseContext);
   return (
     <button
       role="menuitem"
@@ -116,6 +120,7 @@ export function ContextMenuItem({
         if (disabled) return;
         e.stopPropagation();
         onSelect?.();
+        close();
       }}
       className={[
         "w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left",

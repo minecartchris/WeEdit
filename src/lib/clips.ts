@@ -1,4 +1,4 @@
-import type { Clip, MediaClip, MediaItem, TextClip, Track, Transform } from "@/types";
+import type { AudioTrackInfo, Clip, MediaClip, MediaItem, TextClip, Track, Transform } from "@/types";
 
 export const MIN_CLIP_DURATION = 0.1;
 export const DEFAULT_IMAGE_DURATION = 5;
@@ -150,15 +150,39 @@ export function pxToPct(px: number, dimensionPx: number): number {
   return (px / dimensionPx) * 100;
 }
 
+/** Tracks that draw on the stage and share one compositing (zIndex) stack. */
+export function isVisualTrack(track: Pick<Track, "kind">): boolean {
+  return track.kind === "video" || track.kind === "image";
+}
+
+/** Which clip kinds a track kind accepts. Image tracks hold only stills (#50);
+ *  video tracks still take images too, so older projects keep working. */
+export function trackAcceptsClipKind(trackKind: Track["kind"], clipKind: Clip["kind"]): boolean {
+  switch (trackKind) {
+    case "text":  return clipKind === "text";
+    case "audio": return clipKind === "audio";
+    case "image": return clipKind === "image";
+    case "video": return clipKind === "video" || clipKind === "image";
+  }
+  return false;
+}
+
 /** Which media kinds can land on a given track kind. */
 export function isMediaCompatibleWithTrack(
   kind: MediaItem["kind"],
   track: Track,
 ): boolean {
-  if (track.kind === "text")  return false;
-  if (track.kind === "audio") return kind === "audio";
-  if (track.kind === "video") return kind === "video" || kind === "image";
-  return false;
+  return trackAcceptsClipKind(track.kind, kind);
+}
+
+/** The track "add to timeline" should use for a media kind: images go to an
+ *  image track when there is one, otherwise the first compatible track. */
+export function findTrackForMedia(kind: MediaItem["kind"], tracks: Track[]): Track | undefined {
+  if (kind === "image") {
+    const imageTrack = tracks.find((t) => t.kind === "image");
+    if (imageTrack) return imageTrack;
+  }
+  return tracks.find((t) => isMediaCompatibleWithTrack(kind, t));
 }
 
 /** Build a fresh MediaClip from a media item dropped onto a track at time t. */
@@ -277,6 +301,37 @@ function tidyLabel(raw: string, stripExtension = false): string {
     : cleaned;
 }
 
+/**
+ * Language tags that say nothing about the audio — "und" is what ffprobe
+ * reports for an untagged stream, which is nearly every OBS recording. Naming a
+ * track "UND" is worse than falling back to the file name (#52).
+ */
+const MEANINGLESS_LANGUAGES = new Set(["und", "zxx", "mis", "mul", "qaa"]);
+
+/**
+ * Handler names muxers write when nobody named the track ("SoundHandler",
+ * "Core Media Audio", "ISO Media file produced by Google Inc."). A real track
+ * name ("Mic", "Game", "Discord") never looks like these.
+ */
+const GENERIC_HANDLER = /handler|^core media|^iso media|^(sound|audio|track ?\d*)$/i;
+
+/**
+ * The name a single audio stream carries, or "" when it carries none. A name
+ * the user set in WeEdit first, then the stream title (MKV), then the MP4/MOV handler name — where OBS writes the track
+ * names set in its Advanced Audio Properties — then a real language.
+ */
+export function audioStreamName(t: AudioTrackInfo): string {
+  if (t.name?.trim()) return tidyLabel(t.name);
+  if (t.title?.trim()) return tidyLabel(t.title);
+  const handler = t.handlerName?.trim();
+  if (handler && !GENERIC_HANDLER.test(handler)) return tidyLabel(handler);
+  const lang = t.language?.trim().toLowerCase();
+  if (lang && !MEANINGLESS_LANGUAGES.has(lang)) {
+    return tidyLabel(LANGUAGE_NAMES[lang] ?? lang.toUpperCase());
+  }
+  return "";
+}
+
 /** The label one audio clip suggests for the track it sits on. */
 function labelForAudioClip(clip: MediaClip, media: MediaItem[]): string {
   const m = media.find((mm) => mm.id === clip.mediaId);
@@ -289,12 +344,8 @@ function labelForAudioClip(clip: MediaClip, media: MediaItem[]): string {
   // more audible at once the track is a mix, and the source file's name is the
   // honest description of it.
   if (live.length === 1) {
-    const only = live[0];
-    if (only.title) return tidyLabel(only.title);
-    if (only.language) {
-      const key = only.language.toLowerCase();
-      return tidyLabel(LANGUAGE_NAMES[key] ?? only.language.toUpperCase());
-    }
+    const named = audioStreamName(live[0]);
+    if (named) return named;
   }
   return tidyLabel(m.name, true);
 }
@@ -457,6 +508,29 @@ export function clipNoOverlapWindow(
     }
   }
   return { min, max };
+}
+
+/**
+ * The empty stretch of `trackId` that `atSec` falls in, bounded by the clip
+ * before it (or the timeline start) and the clip after it. Null when `atSec`
+ * is inside a clip or there's no clip after it — nothing to close (#48).
+ */
+export function gapAt(
+  trackId: string,
+  atSec: number,
+  allClips: Record<string, Clip>,
+): { startSec: number; endSec: number } | null {
+  let startSec = 0;
+  let endSec = Infinity;
+  for (const c of Object.values(allClips)) {
+    if (c.trackId !== trackId) continue;
+    const end = c.startSec + c.durationSec;
+    if (c.startSec <= atSec && atSec < end) return null;
+    if (end <= atSec) startSec = Math.max(startSec, end);
+    else endSec = Math.min(endSec, c.startSec);
+  }
+  if (endSec === Infinity || endSec - startSec < 1e-6) return null;
+  return { startSec, endSec };
 }
 
 /** Clamp a proposed startSec into the no-overlap window. */

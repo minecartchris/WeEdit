@@ -13,6 +13,7 @@ interface RawAudioStreamInfo {
   channels?: number;
   language?: string;
   title?: string;
+  handlerName?: string;
 }
 
 interface ProbeResult {
@@ -30,6 +31,7 @@ export interface AudioStreamInfo {
   channels?: number;
   language?: string;
   title?: string;
+  handlerName?: string;
 }
 
 function customPath(): string | null {

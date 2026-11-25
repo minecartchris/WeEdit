@@ -1,4 +1,4 @@
-import { AudioLines, FolderSearch, Music, Pencil, Scissors, Trash2 } from "lucide-react";
+import { ArrowLeftToLine, ArrowRightToLine, AudioLines, FolderSearch, Music, Pencil, Scissors, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ContextMenu, ContextMenuItem } from "@/components/ui/ContextMenu";
 import {
@@ -9,13 +9,14 @@ import {
   clipNoOverlapWindow,
   groupMoveWindow,
   snapToAnchors,
+  trackAcceptsClipKind,
 } from "@/lib/clips";
 import { useEditor } from "@/state/editor";
 import { usePrefs } from "@/state/prefs";
 import { useWaveform } from "@/lib/waveform";
 import { replaceMediaFile } from "@/lib/relink";
 import { useIsMediaMissing } from "@/state/missingMedia";
-import type { Clip, MediaClip, MediaItem, TextClip } from "@/types";
+import type { Clip, MediaClip, MediaItem, TextClip, Track } from "@/types";
 
 interface ClipBlockProps {
   clip: Clip;
@@ -281,7 +282,9 @@ export function ClipBlock({ clip, pxPerSec }: ClipBlockProps) {
   const onContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    selectClip(clip.id);
+    // Keep a multi-selection when right-clicking one of its clips, so the
+    // menu's actions (push left/right) can act on the whole group.
+    if (!useEditor.getState().selectedClipIds.includes(clip.id)) selectClip(clip.id);
     // Timeline-second under the cursor, so "Split" cuts exactly where you
     // right-clicked rather than at the (possibly far-away) playhead.
     const rect = e.currentTarget.getBoundingClientRect();
@@ -375,6 +378,7 @@ export function ClipBlock({ clip, pxPerSec }: ClipBlockProps) {
               Replace file…
             </ContextMenuItem>
           )}
+          <PushItems clipId={clip.id} />
           {clip.kind === "video" && (
             <ContextMenuItem icon={AudioLines} onSelect={() => detachAudio(clip.id)}>
               Detach audio
@@ -386,6 +390,30 @@ export function ClipBlock({ clip, pxPerSec }: ClipBlockProps) {
         </ContextMenu>
       )}
     </div>
+  );
+}
+
+// "Push left / right" (#48): slide the clip — or the whole selection it's part
+// of — as far as it goes, butting up against the nearest neighbour (or the
+// timeline start). Same rules as a group drag: relative offsets are kept.
+function PushItems({ clipId }: { clipId: string }) {
+  const pushClips = useEditor((s) => s.pushClips);
+  const selected = useEditor((s) => s.selectedClipIds);
+  const clips = useEditor((s) => s.clips);
+  const ids = selected.includes(clipId) ? selected : [clipId];
+  const win = groupMoveWindow(ids, clips);
+  const canLeft = win.min < -1e-6;
+  const canRight = Number.isFinite(win.max) && win.max > 1e-6;
+  const plural = ids.length > 1 ? "clips" : "clip";
+  return (
+    <>
+      <ContextMenuItem icon={ArrowLeftToLine} disabled={!canLeft} onSelect={() => pushClips(ids, "left")}>
+        Push {plural} left
+      </ContextMenuItem>
+      <ContextMenuItem icon={ArrowRightToLine} disabled={!canRight} onSelect={() => pushClips(ids, "right")}>
+        Push {plural} right
+      </ContextMenuItem>
+    </>
   );
 }
 
@@ -576,10 +604,7 @@ function Waveform({
 // Whether a track lane (by kind) accepts a clip of the given kind during a
 // cross-track drag. Mirrors isMediaCompatibleWithTrack but also handles text.
 function laneAccepts(clipKind: Clip["kind"], trackKind: string): boolean {
-  if (trackKind === "text") return clipKind === "text";
-  if (trackKind === "audio") return clipKind === "audio";
-  if (trackKind === "video") return clipKind === "video" || clipKind === "image";
-  return false;
+  return trackAcceptsClipKind(trackKind as Track["kind"], clipKind);
 }
 
 function renderClipTitle(clip: Clip, m: MediaItem | undefined): string {

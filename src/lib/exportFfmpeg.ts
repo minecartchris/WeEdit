@@ -614,7 +614,8 @@ function collectVideoClipsByZOrder(
   media: MediaItem[],
 ): OrderedVideoClip[] {
   // Lower zIndex = drawn first (bottom). Then within a track, earlier-start first.
-  const videoTracks = tracks.filter((t) => t.kind === "video").sort((a, b) => a.zIndex - b.zIndex);
+  // Video and image tracks share one compositing stack (#50).
+  const videoTracks = tracks.filter((t) => t.kind === "video" || t.kind === "image").sort((a, b) => a.zIndex - b.zIndex);
   const out: OrderedVideoClip[] = [];
   for (const tr of videoTracks) {
     const ordered = tr.clipIds

@@ -17,7 +17,7 @@ import { StockPanel } from "@/components/StockPanel";
 import { TextPanel } from "@/components/TextPanel";
 import { TwitchPanel } from "@/components/TwitchPanel";
 import { Menu, MenuItem, MenuLabel, MenuSeparator } from "@/components/ui/Menu";
-import { isMediaCompatibleWithTrack, makeClipFromMedia } from "@/lib/clips";
+import { findTrackForMedia, makeClipFromMedia } from "@/lib/clips";
 import { startMediaDrag } from "@/lib/customDrag";
 import { importFile, importPath, pickMediaFiles, pickMediaFilesWeb } from "@/lib/media";
 import { replaceMediaFile } from "@/lib/relink";
@@ -339,7 +339,7 @@ function MediaCard({ item, onError }: { item: MediaItem; onError: (msg: string |
 
   const addToTimeline = () => {
     const state = useEditor.getState();
-    const target = state.tracks.find((t) => isMediaCompatibleWithTrack(item.kind, t));
+    const target = findTrackForMedia(item.kind, state.tracks);
     if (!target) {
       console.warn(`No compatible track for ${item.kind} media; add a track first.`);
       return;

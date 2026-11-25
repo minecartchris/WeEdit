@@ -7,7 +7,10 @@ import {
   MIN_CLIP_SPEED,
   autoTrackLabel,
   clampClipStart,
+  gapAt,
+  groupMoveWindow,
   isMediaCompatibleWithTrack,
+  isVisualTrack,
   resolveTransform,
   resolveVolume,
   uniqueTrackName,
@@ -99,6 +102,8 @@ interface EditorState {
   setPlayhead: (sec: number) => void;
   togglePlay: () => void;
   setPreviewRate: (rate: number) => void;
+  /** Step the preview rate by `delta` (e.g. ±0.1), rounded to one decimal. */
+  nudgePreviewRate: (delta: number) => void;
   setZoom: (pxPerSec: number) => void;
   selectClip: (id: string | null, additive?: boolean) => void;
   clearSelection: () => void;
@@ -111,6 +116,8 @@ interface EditorState {
    *  clip that uses it follows). Used by "Replace file…" for moved media. */
   relinkMedia: (id: string, next: MediaItem) => void;
   setMediaAudioTrackMuted: (mediaId: string, trackIndex: number, muted: boolean) => void;
+  /** Name one audio stream of a media item ("" clears it). Auto-label uses it (#52). */
+  setMediaAudioTrackName: (mediaId: string, trackIndex: number, name: string) => void;
 
   // ── Project
   setProjectAspect: (aspect: AspectRatio) => void;
@@ -146,10 +153,22 @@ interface EditorState {
   moveClipToTrack: (clipId: string, newTrackId: string, startSec: number) => void;
   splitAtPlayhead: () => void;
   deleteSelected: () => void;
+  /** Slide clips left/right as far as they go without overlapping anything,
+   *  keeping their relative offsets — like dragging them into a neighbour (#48). */
+  pushClips: (ids: string[], direction: "left" | "right") => void;
+  /** Ripple-delete the empty gap on a track at `atSec`: every clip after it
+   *  shifts left by the gap's length (#48). */
+  closeGap: (trackId: string, atSec: number) => void;
 
   // ── Clipboard
   /** Clips copied with copySelectedClips, ready to paste. */
   clipboard: Clip[];
+  /** The media the copied clips use — carried along for pasting into another project. */
+  clipboardMedia: MediaItem[];
+  /** The tracks the copied clips sat on (kind + name), for recreating them elsewhere. */
+  clipboardTracks: { id: string; kind: TrackKind; name: string }[];
+  /** True once a different project has been opened since the copy. */
+  clipboardForeign: boolean;
   copySelectedClips: () => void;
   pasteClips: () => void;
   /** Split a video clip's audio onto a new audio track and mute the video. */
@@ -224,8 +243,15 @@ const defaultTracks = (): Track[] => [
   { id: "track-audio-1", kind: "audio", name: "Audio 1", volume: 1, muted: false, zIndex: 10, clipIds: [] },
 ];
 
+const TRACK_PREFIX: Record<TrackKind, string> = {
+  video: "Video",
+  image: "Image",
+  audio: "Audio",
+  text: "Text",
+};
+
 function nextTrackName(existing: Track[], kind: TrackKind): string {
-  const prefix = kind === "video" ? "Video" : kind === "audio" ? "Audio" : "Text";
+  const prefix = TRACK_PREFIX[kind];
   const taken = new Set(existing.filter((t) => t.kind === kind).map((t) => t.name));
   for (let i = 1; i < 999; i++) {
     const candidate = `${prefix} ${i}`;
@@ -235,8 +261,13 @@ function nextTrackName(existing: Track[], kind: TrackKind): string {
 }
 
 function nextZIndex(existing: Track[], kind: TrackKind): number {
-  const base = kind === "text" ? 30 : kind === "video" ? 20 : 10;
-  const peer = existing.filter((t) => t.kind === kind).map((t) => t.zIndex);
+  const base = kind === "text" ? 30 : kind === "audio" ? 10 : 20;
+  // Video and image tracks composite in one stack, so a new one of either
+  // lands above every existing visual layer.
+  const visual = kind === "video" || kind === "image";
+  const peer = existing
+    .filter((t) => (visual ? isVisualTrack(t) : t.kind === kind))
+    .map((t) => t.zIndex);
   return peer.length ? Math.max(...peer) + 1 : base;
 }
 
@@ -256,6 +287,9 @@ export const useEditor = create<EditorState>((set, get) => ({
   projectPath: null,
   lastSavedAt: null,
   clipboard: [],
+  clipboardMedia: [],
+  clipboardTracks: [],
+  clipboardForeign: false,
   past: [],
   future: [],
 
@@ -264,6 +298,13 @@ export const useEditor = create<EditorState>((set, get) => ({
   togglePlay: () => set((s) => ({ isPlaying: !s.isPlaying })),
   setPreviewRate: (rate) =>
     set({ previewRate: Number.isFinite(rate) ? Math.max(0.1, Math.min(4, rate)) : 1 }),
+  nudgePreviewRate: (delta) =>
+    set((s) => {
+      // Round to the 0.1 grid so a rate the slider left at e.g. 0.37 steps
+      // to 0.5 / 0.3 rather than 0.47 / 0.27.
+      const next = Math.round((s.previewRate + delta) * 10) / 10;
+      return { previewRate: Math.max(0.1, Math.min(4, next)) };
+    }),
   setZoom: (pxPerSec) => set({ pxPerSec: Math.max(0.05, Math.min(200, pxPerSec)) }),
   selectClip: (id, additive = false) =>
     set((s) => {
@@ -299,6 +340,7 @@ export const useEditor = create<EditorState>((set, get) => ({
                 audioTracks: next.audioTracks?.map((t) => ({
                   ...t,
                   muted: m.audioTracks?.find((o) => o.index === t.index)?.muted ?? t.muted,
+                  name: m.audioTracks?.find((o) => o.index === t.index)?.name ?? t.name,
                 })),
               }
             : m,
@@ -317,6 +359,21 @@ export const useEditor = create<EditorState>((set, get) => ({
         };
       }),
     })),
+
+  setMediaAudioTrackName: (mediaId, trackIndex, name) =>
+    set((s) =>
+      withHistory(s, {
+        media: s.media.map((m) => {
+          if (m.id !== mediaId || !m.audioTracks) return m;
+          return {
+            ...m,
+            audioTracks: m.audioTracks.map((t) =>
+              t.index === trackIndex ? { ...t, name: name.trim() || undefined } : t,
+            ),
+          };
+        }),
+      }),
+    ),
 
   // Project
   setProjectAspect: (aspect) =>
@@ -350,20 +407,11 @@ export const useEditor = create<EditorState>((set, get) => ({
         zIndex: nextZIndex(s.tracks, kind),
         clipIds: [],
       };
-      // Insertion order in the timeline list:
-      //  - video → on top of everything (cleaner layering, matches preview z).
-      //  - audio → directly below the video tracks (top of the audio stack).
-      //  - text  → appended at the end.
-      let tracks: Track[];
-      if (kind === "video") {
-        tracks = [track, ...s.tracks];
-      } else if (kind === "audio") {
-        const lastVideo = s.tracks.reduce((acc, t, i) => (t.kind === "video" ? i : acc), -1);
-        const at = lastVideo + 1;
-        tracks = [...s.tracks.slice(0, at), track, ...s.tracks.slice(at)];
-      } else {
-        tracks = [...s.tracks, track];
-      }
+      // Insertion order in the timeline list (#49): audio goes to the very
+      // bottom; video, image and text go to the very top — text above the
+      // video it captions, and either way you always know where a new track
+      // landed.
+      const tracks = kind === "audio" ? [...s.tracks, track] : [track, ...s.tracks];
       return withHistory(s, { tracks });
     });
     return id;
@@ -470,7 +518,7 @@ export const useEditor = create<EditorState>((set, get) => ({
       const a = s.tracks[idx];
       const b = s.tracks[swapIdx];
       const tracks = [...s.tracks];
-      if (a.kind === "video" && b.kind === "video") {
+      if (isVisualTrack(a) && isVisualTrack(b)) {
         // Swap z-index too so "higher in the list" stays "renders on top".
         tracks[idx] = { ...b, zIndex: a.zIndex };
         tracks[swapIdx] = { ...a, zIndex: b.zIndex };
@@ -616,20 +664,129 @@ export const useEditor = create<EditorState>((set, get) => ({
       });
     }),
 
-  // Clipboard. Copy deep-clones the current selection; paste lays them down at
-  // the playhead preserving their relative offsets, on the original track when
-  // it still fits else the first compatible one, clamped to avoid overlap.
+  pushClips: (ids, direction) =>
+    set((s) => {
+      const live = ids.filter((id) => s.clips[id]);
+      if (live.length === 0) return s;
+      const win = groupMoveWindow(live, s.clips);
+      const d = direction === "left" ? win.min : win.max;
+      if (!Number.isFinite(d) || Math.abs(d) < 1e-6) return s;
+      const clips = { ...s.clips };
+      for (const id of live) {
+        clips[id] = { ...clips[id], startSec: Math.max(0, clips[id].startSec + d) } as Clip;
+      }
+      return withHistory(s, { clips });
+    }),
+  closeGap: (trackId, atSec) =>
+    set((s) => {
+      const gap = gapAt(trackId, atSec, s.clips);
+      if (!gap) return s;
+      const shift = gap.endSec - gap.startSec;
+      const clips = { ...s.clips };
+      for (const c of Object.values(s.clips)) {
+        if (c.trackId === trackId && c.startSec >= gap.endSec - 1e-6) {
+          clips[c.id] = { ...c, startSec: Math.max(0, c.startSec - shift) } as Clip;
+        }
+      }
+      return withHistory(s, { clips });
+    }),
+
+  // Clipboard. Copy deep-clones the current selection along with the media and
+  // tracks it came from, so it survives opening another project (#51).
+  //  - Same project: paste lays the clips down at the playhead keeping their
+  //    relative offsets, on the original track when it still fits else the
+  //    first compatible one, clamped to avoid overlap.
+  //  - Another project: the clips' media is brought along, and they land on
+  //    brand-new tracks at the top of the timeline (one per source track, in
+  //    the source order) so nothing in the open project gets disturbed.
   copySelectedClips: () =>
-    set((s) => ({
-      clipboard: s.selectedClipIds
+    set((s) => {
+      const clips = s.selectedClipIds
         .map((id) => s.clips[id])
         .filter((c): c is Clip => Boolean(c))
-        .map((c) => ({ ...c })),
-    })),
+        .map((c) => ({ ...c }));
+      if (clips.length === 0) return s;
+      const mediaIds = new Set(clips.flatMap((c) => (c.kind === "text" ? [] : [(c as MediaClip).mediaId])));
+      const trackIds = new Set(clips.map((c) => c.trackId));
+      return {
+        clipboard: clips,
+        clipboardMedia: s.media.filter((m) => mediaIds.has(m.id)),
+        clipboardTracks: s.tracks
+          .filter((t) => trackIds.has(t.id))
+          .map((t) => ({ id: t.id, kind: t.kind, name: t.name })),
+        clipboardForeign: false,
+      };
+    }),
   pasteClips: () =>
     set((s) => {
       if (s.clipboard.length === 0) return s;
       const minStart = Math.min(...s.clipboard.map((c) => c.startSec));
+      const startFor = (c: Clip) => Math.max(0, s.playheadSec + (c.startSec - minStart));
+
+      if (s.clipboardForeign) {
+        // Bring the media along. Reuse this project's copy when it already has
+        // the same file (by id, else by path) so the bin doesn't fill with dupes.
+        const media = [...s.media];
+        const mediaRemap = new Map<string, string>();
+        for (const m of s.clipboardMedia) {
+          const existing = media.find((mm) => mm.id === m.id) ?? media.find((mm) => mm.src === m.src);
+          if (existing) {
+            mediaRemap.set(m.id, existing.id);
+          } else {
+            media.push({ ...m });
+            mediaRemap.set(m.id, m.id);
+          }
+        }
+
+        // One fresh track per source track, stacked at the top in source order.
+        const taken = new Set(s.tracks.map((t) => t.name));
+        let zTracks = [...s.tracks];
+        const trackRemap = new Map<string, Track>();
+        for (const src of s.clipboardTracks) {
+          const id = `track-${src.kind}-${crypto.randomUUID().slice(0, 8)}`;
+          const name = uniqueTrackName(src.name, taken);
+          taken.add(name);
+          const track: Track = {
+            id,
+            kind: src.kind,
+            name,
+            volume: 1,
+            muted: false,
+            zIndex: nextZIndex(zTracks, src.kind),
+            clipIds: [],
+          };
+          zTracks = [...zTracks, track];
+          trackRemap.set(src.id, track);
+        }
+
+        const newClips: Record<string, Clip> = { ...s.clips };
+        const newSelection: string[] = [];
+        for (const c of s.clipboard) {
+          const target = trackRemap.get(c.trackId);
+          if (!target) continue;
+          const id = crypto.randomUUID();
+          const next = { ...c, id, trackId: target.id, startSec: startFor(c) } as Clip;
+          if (next.kind !== "text") {
+            const mid = mediaRemap.get((next as MediaClip).mediaId);
+            if (!mid) continue;
+            (next as MediaClip).mediaId = mid;
+          }
+          newClips[id] = next;
+          target.clipIds.push(id);
+          newSelection.push(id);
+        }
+        if (newSelection.length === 0) return s;
+        const added = s.clipboardTracks
+          .map((t) => trackRemap.get(t.id)!)
+          .filter((t) => t.clipIds.length > 0);
+        return withHistory(s, {
+          media,
+          clips: newClips,
+          tracks: [...added, ...s.tracks],
+          selectedClipIds: newSelection,
+        });
+      }
+
       const compatible = (c: Clip) => (t: Track) =>
         c.kind === "text" ? t.kind === "text" : isMediaCompatibleWithTrack(c.kind, t);
 
@@ -643,7 +800,7 @@ export const useEditor = create<EditorState>((set, get) => ({
         const target = orig && fits(orig) ? orig : s.tracks.find(fits);
         if (!target) continue;
         const id = crypto.randomUUID();
-        const desiredStart = Math.max(0, s.playheadSec + (c.startSec - minStart));
+        const desiredStart = startFor(c);
         const start = clampClipStart(id, target.id, c.durationSec, desiredStart, desiredStart, newClips);
         newClips[id] = { ...c, id, trackId: target.id, startSec: start } as Clip;
         (trackAdds[target.id] ??= []).push(id);
@@ -901,7 +1058,7 @@ export const useEditor = create<EditorState>((set, get) => ({
   setProjectPath: (path) => set({ projectPath: path }),
   setLastSavedAt: (t) => set({ lastSavedAt: t }),
   applyLoadedProject: (data, path, savedAt) =>
-    set({
+    set((s) => ({
       project: data.project,
       media: data.media,
       tracks: data.tracks,
@@ -911,10 +1068,12 @@ export const useEditor = create<EditorState>((set, get) => ({
       selectedClipIds: [],
       playheadSec: 0,
       isPlaying: false,
-      clipboard: [],
+      // The clipboard outlives the project so clips can be pasted into the
+      // next one (#51). Restoring a version of the same project keeps it local.
+      clipboardForeign: s.clipboardForeign || path !== s.projectPath,
       past: [],
       future: [],
-    }),
+    })),
   resetProject: () =>
     set({
       project: defaultProject(),
@@ -926,7 +1085,9 @@ export const useEditor = create<EditorState>((set, get) => ({
       selectedClipIds: [],
       playheadSec: 0,
       isPlaying: false,
-      clipboard: [],
+      // The clipboard outlives the project so clips can be pasted into the
+      // next one (#51); it just no longer refers to this project's tracks.
+      clipboardForeign: true,
       past: [],
       future: [],
     }),

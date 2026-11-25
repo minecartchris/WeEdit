@@ -541,6 +541,10 @@ struct AudioStreamInfo {
     codec: Option<String>,
     language: Option<String>,
     title: Option<String>,
+    /// MP4/MOV `hdlr` name. OBS (and most recorders writing MP4/MOV) store the
+    /// per-track names the user set ("Mic", "Game"...) here rather than in
+    /// `title`, so it's the main source for naming audio tracks.
+    handler_name: Option<String>,
     channels: Option<u32>,
 }
 
@@ -605,6 +609,9 @@ fn ffprobe_audio_streams_blocking(
         language_upper: Option<String>,
         #[serde(rename = "TITLE")]
         title_upper: Option<String>,
+        handler_name: Option<String>,
+        #[serde(rename = "HANDLER_NAME")]
+        handler_name_upper: Option<String>,
     }
     #[derive(serde::Deserialize)]
     struct FfprobeOutput {
@@ -634,6 +641,10 @@ fn ffprobe_audio_streams_blocking(
                 .tags
                 .as_ref()
                 .and_then(|t| t.title.clone().or_else(|| t.title_upper.clone())),
+            handler_name: s
+                .tags
+                .as_ref()
+                .and_then(|t| t.handler_name.clone().or_else(|| t.handler_name_upper.clone())),
         })
         .collect();
 

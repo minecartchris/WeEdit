@@ -14,6 +14,10 @@ export interface AudioTrackInfo {
   language?: string;
   /** Stream-level title from ffprobe tags. */
   title?: string;
+  /** MP4/MOV handler name — where OBS stores per-track names ("Mic", "Game"). */
+  handlerName?: string;
+  /** Name the user gave this stream in WeEdit. Wins over anything in the file. */
+  name?: string;
   /** Absolute path to the extracted single-stream audio file. */
   filepath: string;
   /** True if the user has muted this track for playback. */
@@ -54,7 +58,7 @@ export interface MediaItem {
   ext?: string;
 }
 
-export type TrackKind = "video" | "audio" | "text";
+export type TrackKind = "video" | "image" | "audio" | "text";
 
 export interface Track {
   id: string;

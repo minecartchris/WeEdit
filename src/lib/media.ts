@@ -152,6 +152,7 @@ async function detectAndExtractAudioTracks(
       channels: s.channels,
       language: s.language,
       title: s.title,
+      handlerName: s.handlerName,
       filepath: byIndex.get(s.index) ?? "",
       muted: false,
     }));

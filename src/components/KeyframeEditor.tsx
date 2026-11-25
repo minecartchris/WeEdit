@@ -1,7 +1,6 @@
-import { ChevronDown, ChevronRight, Diamond } from "lucide-react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { Diamond } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useEditor } from "@/state/editor";
-import { usePrefs } from "@/state/prefs";
 import type { Clip, Keyframe, MediaClip } from "@/types";
 
 type Property = "volume" | "xPct" | "yPct" | "scale" | "rotation" | "tilt";
@@ -17,31 +16,28 @@ const PROPERTIES: { key: Property; label: string; unit: string; format: (v: numb
 
 const PADDING_LEFT = 32;
 const PADDING_RIGHT = 16;
-const GRAPH_HEIGHT = 100;
+const GRAPH_HEIGHT = 140;
 const HEADER_HEIGHT = 32;
 
-export function KeyframeEditor() {
-  const clip = useEditor((s): Clip | null => {
-    if (s.selectedClipIds.length !== 1) return null;
-    return s.clips[s.selectedClipIds[0]] ?? null;
-  });
-  const open = usePrefs((s) => s.keyframeEditorOpen);
-  const setOpen = usePrefs((s) => s.setKeyframeEditorOpen);
-
-  if (!clip) return null;
-  if (clip.kind === "text") return null;
-
+// Keyframes tab of the right-hand panel, next to Properties (#46). It used to
+// be a strip between the preview and the timeline that appeared on every clip
+// selection and shoved the whole top half of the window up and down.
+export function KeyframesTab({ clip }: { clip: Clip | null }) {
+  if (!clip || clip.kind === "text") {
+    return (
+      <div className="h-full grid place-items-center text-center px-6 text-we-muted">
+        <div className="flex flex-col items-center gap-2">
+          <Diamond className="w-8 h-8" />
+          <p className="text-sm">
+            {clip ? "Text clips have no keyframe graph." : "Select a single clip to see its keyframes."}
+          </p>
+        </div>
+      </div>
+    );
+  }
   return (
-    <div className="border-t border-we-border bg-we-panel shrink-0">
-      <button
-        onClick={() => setOpen(!open)}
-        className="w-full h-8 flex items-center gap-1.5 px-3 text-xs font-medium text-we-ink hover:bg-we-hover transition-colors"
-      >
-        {open ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-        <Diamond className="w-3 h-3 text-we-teal" />
-        Keyframes
-      </button>
-      {open && <KeyframeGraph clip={clip as MediaClip} />}
+    <div className="pt-3">
+      <KeyframeGraph clip={clip as MediaClip} />
     </div>
   );
 }
@@ -119,7 +115,18 @@ function KeyframeGraph({ clip }: { clip: MediaClip }) {
     }
   };
 
-  const width = 600;
+  // Draw in real pixels so labels don't stretch in the narrow side panel.
+  const [width, setWidth] = useState(300);
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => {
+      const w = Math.round(entry.contentRect.width);
+      if (w > 0) setWidth(w);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const linePath = points.length >= 2
     ? points.map((p, i) => `${i === 0 ? "M" : "L"} ${tToX(p.t, width)} ${vToY(p.v)}`).join(" ")

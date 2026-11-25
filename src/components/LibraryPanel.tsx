@@ -1,6 +1,6 @@
 import { Film, Image as ImageIcon, Music, Plus, Trash2, Upload } from "lucide-react";
 import { useMemo } from "react";
-import { isMediaCompatibleWithTrack, makeClipFromMedia } from "@/lib/clips";
+import { findTrackForMedia, makeClipFromMedia } from "@/lib/clips";
 import { startDragWithSource } from "@/lib/customDrag";
 import { pickMediaFiles } from "@/lib/media";
 import { formatDuration, useEditor } from "@/state/editor";
@@ -89,7 +89,7 @@ function LibraryCard({ item }: { item: LibraryItem }) {
 
   const addAtPlayhead = () => {
     const state = useEditor.getState();
-    const target = state.tracks.find((t) => isMediaCompatibleWithTrack(media.kind, t));
+    const target = findTrackForMedia(media.kind, state.tracks);
     if (!target) {
       console.warn(`No compatible track for ${media.kind}; add a track first.`);
       return;

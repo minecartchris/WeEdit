@@ -1,7 +1,7 @@
 import { toPlayableUrl } from "@/lib/media";
 import { MAX_VOLUME, applyLoudness } from "@/lib/audioGain";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { MAX_SCALE, MIN_SCALE, cropClipPath, previousClipOnTrack, resolveTransform, resolveVolume, type ResolvedTransform } from "@/lib/clips";
+import { MAX_SCALE, MIN_SCALE, cropClipPath, isVisualTrack, previousClipOnTrack, resolveTransform, resolveVolume, type ResolvedTransform } from "@/lib/clips";
 import { useEditor } from "@/state/editor";
 import type { AspectRatio, Clip, MediaClip, MediaItem, TextClip } from "@/types";
 
@@ -701,7 +701,7 @@ function collectActiveVisuals(
   playheadSec: number,
 ): VisualEntry[] {
   const ascending = [...tracks]
-    .filter((t) => t.kind === "video")
+    .filter(isVisualTrack)
     .sort((a, b) => a.zIndex - b.zIndex);
   const out: VisualEntry[] = [];
 

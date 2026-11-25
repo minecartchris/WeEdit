@@ -8,7 +8,7 @@ import {
   SkipBack,
   SkipForward,
 } from "lucide-react";
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { PreviewStage } from "@/components/PreviewStage";
 import { Menu, MenuItem, MenuLabel } from "@/components/ui/Menu";
 import { useEditor } from "@/state/editor";
@@ -160,6 +160,21 @@ const posToRate = (p: number) => MIN_RATE * Math.pow(MAX_RATE / MIN_RATE, p / ST
 function SpeedSlider() {
   const rate = useEditor((s) => s.previewRate);
   const setRate = useEditor((s) => s.setPreviewRate);
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  // Scroll over the slider: up = +0.1x, down = -0.1x (#47). Native listener so
+  // it can be non-passive and stop the page/timeline from scrolling instead.
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (e.deltaY === 0) return;
+      e.preventDefault();
+      useEditor.getState().nudgePreviewRate(e.deltaY < 0 ? 0.1 : -0.1);
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
 
   const onChange = (pos: number) => {
     let r = posToRate(pos);
@@ -173,8 +188,9 @@ function SpeedSlider() {
 
   return (
     <div
+      ref={wrapRef}
       className="flex items-center gap-2 mr-2"
-      title="Preview speed (0.1x–4x). Double-click to reset to 1x."
+      title="Preview speed (0.1x–4x). Scroll to change by 0.1x, or press [ / ]. Double-click to reset to 1x."
     >
       <input
         type="range"

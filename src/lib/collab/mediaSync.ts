@@ -3,7 +3,7 @@ import { appLocalDataDir } from "@tauri-apps/api/path";
 import { WebrtcProvider } from "y-webrtc";
 import { createMediaChannels, dataFrame, type MediaChannel } from "@/lib/collab/mediaChannel";
 import { useEditor } from "@/state/editor";
-import { clearTransfer, setTransfer, useTransfers } from "@/state/transfers";
+import { clearTransfer, setQueued, setTransfer, useTransfers } from "@/state/transfers";
 import type { MediaItem } from "@/types";
 
 // Peer-to-peer media transfer for collaboration.
@@ -42,6 +42,13 @@ const STALL_TIMEOUT_MS = 60_000;
 const RETRY_COOLDOWN_MS = 15_000;
 /** Watchdog tick. */
 const WATCHDOG_MS = 10_000;
+/**
+ * How many files to download at once. One: parallel fetches split the same
+ * peer link (and the sender's disk) between files, so every file crawls and
+ * none becomes usable until the very end. Sequentially, each file arrives at
+ * full speed and is playable as soon as it lands (#53).
+ */
+const MAX_ACTIVE_FETCHES = 1;
 
 // Diagnostic logging for the P2P media transfer. Visible in DevTools on both
 // peers so a stalled transfer can be traced (discovery vs request vs blocks).
@@ -180,7 +187,7 @@ export async function stopMediaSync(): Promise<void> {
   mainAwareness = null;
   fetches.clear();
   sends.clear();
-  useTransfers.setState({ transfers: {} });
+  useTransfers.setState({ transfers: {}, queued: 0 });
 }
 
 /** A peer went away: stop whatever was in flight with it, either direction. */
@@ -261,11 +268,32 @@ function holdersOf(hash: string, skip: Set<number>): number[] {
   return out;
 }
 
-// For each media we don't have bytes for, resolve from cache or fetch from a peer.
+/** Fetches still moving bytes (a finished one that is only verifying doesn't count). */
+function activeFetchCount(): number {
+  let n = 0;
+  for (const f of fetches.values()) if (!f.done) n++;
+  return n;
+}
+
+/**
+ * Media we lack bytes for, in download order: anything placed on the timeline
+ * first (that's what the user is about to look at), then library order.
+ */
+function missingMediaInOrder(): MediaItem[] {
+  const { media, clips } = useEditor.getState();
+  const used = new Set<string>();
+  for (const c of Object.values(clips)) if ("mediaId" in c) used.add(c.mediaId);
+  const missing = media.filter((m) => !m.src && m.contentHash && m.ext);
+  return [...missing.filter((m) => used.has(m.id)), ...missing.filter((m) => !used.has(m.id))];
+}
+
+// For each media we don't have bytes for, resolve from cache or queue a fetch
+// from a peer. Downloads run MAX_ACTIVE_FETCHES at a time; the rest wait and are
+// picked up by the scan that runs when the current one finishes.
 async function maybeFetchMissing(): Promise<void> {
-  for (const m of useEditor.getState().media) {
-    if (m.src) continue;                       // already resolved locally
-    if (!m.contentHash || !m.ext) continue;    // not yet identified
+  let queued = 0;
+  for (const m of missingMediaInOrder()) {
+    if (!m.contentHash || !m.ext) continue;
     if (fetches.has(m.contentHash)) continue;  // in progress
     const until = cooldowns.get(m.contentHash);
     if (until != null && Date.now() < until) continue; // recently failed
@@ -284,10 +312,15 @@ async function maybeFetchMissing(): Promise<void> {
     }
 
     const holders = holdersOf(m.contentHash, new Set());
-    log("need", m.name, "hash", m.contentHash.slice(0, 8), "holders", holders);
     if (holders.length === 0) continue; // nobody reachable has it — retry next scan
+    if (activeFetchCount() >= MAX_ACTIVE_FETCHES) {
+      queued++;
+      continue;
+    }
+    log("need", m.name, "hash", m.contentHash.slice(0, 8), "holders", holders);
     void beginFetch(m, finalPath);
   }
+  setQueued(queued);
 }
 
 function setMediaSrcLocal(id: string, path: string): void {
@@ -371,6 +404,7 @@ function failFetch(f: FetchState, why: string): void {
   // Leave the row up briefly so the failure is visible, then let the next scan
   // try again — a holder may come back online.
   setTimeout(() => clearTransfer(f.hash), 6000);
+  scheduleScan(); // start the next queued file
 }
 
 function fetchById(transferId: number): FetchState | null {
@@ -491,6 +525,8 @@ function reportProgress(f: FetchState): void {
 async function finishFetch(f: FetchState): Promise<void> {
   if (f.done) return;
   f.done = true;
+  // The link is free now — start the next queued file while this one verifies.
+  scheduleScan();
   setTransfer(f.hash, { status: "verifying", received: f.written, rate: 0 });
   try {
     const got = await invoke<string>("hash_file", { path: f.partPath });
@@ -542,18 +578,27 @@ async function serve(chan: MediaChannel, msg: Record<string, unknown>): Promise<
     // the sender pays the CPU either way. Probe once, then stick with it.
     let compress: boolean = true;
     let probed = false;
-
-    for (let offset = 0; offset < size; offset += BLOCK_BYTES) {
-      if (state.cancelled || chan.channel.readyState !== "open") {
-        log("send cancelled for", local.name);
-        return;
-      }
-      const raw: ArrayBuffer = await invoke<ArrayBuffer>("read_media_block", {
-        path: local.src,
+    const src = local.src;
+    const readBlock = (offset: number): Promise<ArrayBuffer> => {
+      const p = invoke<ArrayBuffer>("read_media_block", {
+        path: src,
         offset,
         length: Math.min(BLOCK_BYTES, size - offset),
         compress,
       });
+      p.catch(() => {}); // if we bail out before awaiting it, don't warn
+      return p;
+    };
+
+    // Read ahead one block: the next disk read (and deflate) runs while the
+    // current block is still going out, instead of the link idling on it.
+    let nextRead: Promise<ArrayBuffer> | null = size > 0 ? readBlock(0) : null;
+    for (let offset = 0; offset < size && nextRead; offset += BLOCK_BYTES) {
+      if (state.cancelled || chan.channel.readyState !== "open") {
+        log("send cancelled for", local.name);
+        return;
+      }
+      const raw: ArrayBuffer = await nextRead;
       const block: Uint8Array<ArrayBuffer> = new Uint8Array(raw);
       if (block.byteLength <= 1) break; // EOF (the file shrank under us)
 
@@ -565,6 +610,9 @@ async function serve(chan: MediaChannel, msg: Record<string, unknown>): Promise<
         compress = block[0] === 1;
         log(compress ? "compressing" : "sending stored:", local.name);
       }
+      // Issued after the probe so it uses the settled compression choice.
+      const nextOffset = offset + BLOCK_BYTES;
+      nextRead = nextOffset < size ? readBlock(nextOffset) : null;
 
       chan.sendControl({ t: "block", id: transferId, encLen: block.byteLength });
       for (let at = 0; at < block.byteLength; at += FRAME_BYTES) {

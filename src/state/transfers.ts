@@ -16,9 +16,15 @@ export interface Transfer {
 
 interface TransfersState {
   transfers: Record<string, Transfer>;
+  /** Files waiting their turn behind the active download. */
+  queued: number;
 }
 
-export const useTransfers = create<TransfersState>(() => ({ transfers: {} }));
+export const useTransfers = create<TransfersState>(() => ({ transfers: {}, queued: 0 }));
+
+export function setQueued(queued: number): void {
+  if (useTransfers.getState().queued !== queued) useTransfers.setState({ queued });
+}
 
 export function setTransfer(hash: string, patch: Partial<Transfer> & { name?: string }): void {
   useTransfers.setState((s) => {

@@ -6,15 +6,21 @@ import { useTransfers, type Transfer } from "@/state/transfers";
 // collaboration session is fetching files this peer doesn't have yet.
 export function MediaSyncIndicator() {
   const transfersRecord = useTransfers((s) => s.transfers);
+  const queued = useTransfers((s) => s.queued);
   const transfers = useMemo(() => Object.values(transfersRecord), [transfersRecord]);
 
-  if (transfers.length === 0) return null;
+  if (transfers.length === 0 && queued === 0) return null;
 
   return (
     <div className="fixed bottom-4 right-4 z-40 flex flex-col gap-2 w-72">
       {transfers.map((t) => (
         <TransferRow key={t.hash} t={t} />
       ))}
+      {queued > 0 && (
+        <div className="rounded-lg border border-we-border bg-we-panel shadow-lg px-3 py-2 text-xs text-we-muted">
+          {queued} more {queued === 1 ? "file" : "files"} queued
+        </div>
+      )}
     </div>
   );
 }

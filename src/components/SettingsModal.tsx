@@ -1,6 +1,8 @@
 import { Monitor, Moon, RotateCcw, Sun } from "lucide-react";
 import { useEffect, useState } from "react";
+import { CollabDownloadSetting } from "@/components/CollabDownloadSetting";
 import { Modal } from "@/components/ui/Modal";
+import { isTauri } from "@/lib/platform";
 import { SHORTCUT_COMMANDS, eventToCombo, formatCombo } from "@/lib/shortcuts";
 import { usePrefs } from "@/state/prefs";
 import type { PositionUnit, ThemeMode } from "@/types";
@@ -21,6 +23,8 @@ export function SettingsModal({ open, onClose }: Props) {
         <EditorSection />
         <TimelineSection />
         <AutosaveSection />
+        <CollaborationSection />
+        <PrivacySection />
         <ShortcutsSection />
       </div>
     </Modal>
@@ -266,6 +270,32 @@ function AutosaveSection() {
             disabled={!autosave.versionsEnabled}
             onCommit={(versionIntervalMin) => setAutosave({ versionIntervalMin })}
           />
+        </Row>
+      </div>
+    </Section>
+  );
+}
+
+function CollaborationSection() {
+  if (!isTauri()) return null;
+  return (
+    <Section title="Collaboration" hint="Where media from collaborators is saved when you join their session.">
+      <CollabDownloadSetting />
+    </Section>
+  );
+}
+
+function PrivacySection() {
+  const share = usePrefs((s) => s.shareUsageStats);
+  const setShare = usePrefs((s) => s.setShareUsageStats);
+  return (
+    <Section title="Privacy">
+      <div className="flex flex-col divide-y divide-we-border rounded-lg border border-we-border overflow-hidden">
+        <Row
+          label="Count me as a WeEdit user"
+          hint="Once a day, send an anonymous random install ID, the app version and your OS so the website can show how many people use WeEdit. No project, file or account data is ever sent."
+        >
+          <Toggle on={share} onChange={setShare} />
         </Row>
       </div>
     </Section>

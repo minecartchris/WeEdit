@@ -1,9 +1,12 @@
-import { invoke } from "@tauri-apps/api/core";
-import { appLocalDataDir } from "@tauri-apps/api/path";
+import { listen } from "@tauri-apps/api/event";
 import { WebrtcProvider } from "y-webrtc";
 import { createMediaChannels, dataFrame, type MediaChannel } from "@/lib/collab/mediaChannel";
+import { getMediaStore, type MediaStore } from "@/lib/collab/mediaStore";
+import { isTauri } from "@/lib/platform";
+import { usePrefs } from "@/state/prefs";
+import { extractAudioTracks, ffmpegRun, ffprobeAudioStreams, type FfmpegExportProgress } from "@/lib/ffmpeg";
 import { useEditor } from "@/state/editor";
-import { clearTransfer, setQueued, setTransfer, useTransfers } from "@/state/transfers";
+import { clearTransfer, setFilesProgress, setQueued, setTransfer, useTransfers, type TransferVariant } from "@/state/transfers";
 import type { MediaItem } from "@/types";
 
 // Peer-to-peer media transfer for collaboration.
@@ -22,6 +25,13 @@ import type { MediaItem } from "@/types";
 // throughput at a few hundred KB/s no matter how fast the link was, which is why
 // multi-GB sources took hours. Now a block moves once, to one peer, as raw
 // bytes, with the channel's own back-pressure as flow control.
+//
+// PROXY FIRST: the usual ceiling is the sender's home upload (often ~20 Mbit/s,
+// i.e. ~2.5 MB/s), and a multi-GB recording at that rate takes hours. So for
+// big videos the holder first transcodes a small 720p editing copy (a "proxy")
+// with ffmpeg and sends that; the receiver edits on it within minutes while the
+// original follows in the background, then swaps in automatically. Export is
+// blocked while any clip still sits on a proxy (see compileExport).
 //
 // Still true: a shared NAS beats any WAN transfer, and the fetch is lazy (only
 // files you actually need) and cached on disk, so a rejoin costs nothing.
@@ -49,6 +59,10 @@ const WATCHDOG_MS = 10_000;
  * full speed and is playable as soon as it lands (#53).
  */
 const MAX_ACTIVE_FETCHES = 1;
+/** Videos smaller than this aren't worth a proxy — the original is quick anyway. */
+const PROXY_MIN_BYTES = 48 * 1024 * 1024;
+/** How often the holder reports proxy-encode progress while the receiver waits. */
+const PREPARING_PING_MS = 1000;
 
 // Diagnostic logging for the P2P media transfer. Visible in DevTools on both
 // peers so a stalled transfer can be traced (discovery vs request vs blocks).
@@ -56,6 +70,12 @@ const log = (...args: unknown[]) => console.log("[mediaSync]", ...args);
 
 // ── Active-session handles ───────────────────────────────────────────────────
 let channels: ReturnType<typeof createMediaChannels> | null = null;
+/** File access for this platform (disk on desktop, OPFS + blobs in the browser). */
+let store: MediaStore | null = null;
+/** Folder the user chose for finished downloads (#55); null = the private cache. */
+let saveDir: string | null = null;
+/** Originals that finished downloading this session, for the "2 / 15" counter. */
+let filesDone = 0;
 let mainAwareness: WebrtcProvider["awareness"] | null = null;
 let clientId = 0;
 let cacheDir = "";
@@ -65,24 +85,33 @@ let scanTimer: number | null = null;
 let scanWantsHashes = false;
 let watchdog: number | null = null;
 
-/** contentHash -> timestamp before which we won't re-request it after a failure. */
+/** fetch key -> timestamp before which we won't re-request it after a failure. */
 const cooldowns = new Map<string, number>();
+/** Content hashes whose proxy we gave up on (holder can't make one) — fetch the original directly. */
+const noProxy = new Set<string>();
+/** `${clientId}:${hash}` proxy-prepare hints already sent, so we don't repeat them. */
+const hinted = new Set<string>();
 
-/** Transfers we're receiving, keyed by content hash. */
+/** Transfers we're receiving, keyed by fetchKey(hash, variant). */
 const fetches = new Map<string, FetchState>();
 /** Transfers we're sending, keyed by `${peerId}:${transferId}`. */
 const sends = new Map<string, SendState>();
 
 interface FetchState {
+  key: string;
+  variant: TransferVariant;
   transferId: number;
   hash: string;
-  ext: string;
   mediaId: string;
   name: string;
   partPath: string;
   finalPath: string;
+  /** sha256 the finished file must match: the content hash, or the proxy's own hash from the offer. */
+  verifyHash: string | null;
   /** Bytes confirmed written to the .part file. */
   written: number;
+  /** Bytes of the .part file already on disk from an interrupted earlier attempt. */
+  resumeFrom: number;
   /** Total file size, as offered by the holder. */
   size: number;
   /** Frames of the in-flight block, awaiting the rest of it. */
@@ -108,22 +137,57 @@ interface SendState {
   cancelled: boolean;
 }
 
+/** Progress of a file we're sending, mirrored into the transfers toast so the host sees it too. */
+interface SendProgress {
+  key: string;
+  sent: number;
+  size: number;
+  rateAt: number;
+  rateBytes: number;
+}
+
+function reportSend(p: SendProgress): void {
+  const now = performance.now();
+  const dt = now - p.rateAt;
+  if (dt >= 500) {
+    const rate = ((p.sent - p.rateBytes) * 1000) / dt;
+    p.rateAt = now;
+    p.rateBytes = p.sent;
+    setTransfer(p.key, { received: p.sent, total: p.size, rate });
+  } else {
+    setTransfer(p.key, { received: p.sent, total: p.size });
+  }
+}
+
+/** A collaborator's display name from awareness, for the upload rows. */
+function peerName(chan: MediaChannel): string | undefined {
+  if (chan.clientId == null) return undefined;
+  const state = mainAwareness?.getStates().get(chan.clientId) as { name?: unknown } | undefined;
+  return typeof state?.name === "string" && state.name.trim() ? state.name.trim() : undefined;
+}
+
+const fetchKey = (hash: string, variant: TransferVariant) => `${hash}:${variant}`;
+
 const extOf = (src: string) => (src.split(".").pop() || "bin").toLowerCase().replace(/[^a-z0-9]/g, "");
 
-/** Paths cross the IPC header as URL-safe base64 to survive non-ASCII names. */
-function encodePathHeader(path: string): string {
-  const bytes = new TextEncoder().encode(path);
-  let bin = "";
-  for (const b of bytes) bin += String.fromCharCode(b);
-  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+async function pathExists(path: string): Promise<boolean> {
+  return store ? store.exists(path) : false;
 }
 
 export async function startMediaSync(roomId: string, mainProvider: WebrtcProvider): Promise<void> {
   await stopMediaSync();
   mainAwareness = mainProvider.awareness;
   clientId = mainAwareness.clientID;
-  const base = (await appLocalDataDir()).replace(/\\/g, "/").replace(/\/$/, "");
-  cacheDir = `${base}/collab-media`;
+  store = await getMediaStore();
+  cacheDir = store.cacheDir;
+  const prefs = usePrefs.getState();
+  saveDir =
+    isTauri() && !prefs.collabMediaTemp && prefs.collabMediaDir
+      ? prefs.collabMediaDir.replace(/\\/g, "/").replace(/\/$/, "")
+      : null;
+  await store.ensureDir(cacheDir).catch(() => {});
+  if (saveDir) await store.ensureDir(saveDir).catch(() => {});
+  filesDone = 0;
 
   channels = createMediaChannels(mainProvider, {
     clientId,
@@ -172,6 +236,8 @@ export async function stopMediaSync(): Promise<void> {
   unsubStore?.();
   unsubStore = null;
   cooldowns.clear();
+  noProxy.clear();
+  hinted.clear();
   if (mainAwareness) mainAwareness.off("change", scheduleScan);
   for (const f of fetches.values()) {
     f.done = true;
@@ -187,7 +253,8 @@ export async function stopMediaSync(): Promise<void> {
   mainAwareness = null;
   fetches.clear();
   sends.clear();
-  useTransfers.setState({ transfers: {}, queued: 0 });
+  useTransfers.setState({ transfers: {}, queued: 0, filesDone: 0, filesTotal: 0 });
+  filesDone = 0;
 }
 
 /** A peer went away: stop whatever was in flight with it, either direction. */
@@ -219,25 +286,21 @@ function scheduleScan(withHashes = false): void {
 }
 
 // Hash the files we hold (so peers can identify + request them) and advertise
-// the set of hashes we can serve via the main awareness `have` field.
+// the set of hashes we can serve via the main awareness `have` field. A proxy
+// isn't the file, so media we only hold a proxy of is never advertised.
 async function refreshLocalHashes(): Promise<void> {
   const media = useEditor.getState().media;
   const have: string[] = [];
   for (const m of media) {
-    if (!m.src) continue;
-    let exists = false;
-    try {
-      exists = await invoke<boolean>("path_exists", { path: m.src });
-    } catch {
-      exists = false;
-    }
-    if (!exists) continue;
+    if (!m.src || m.srcIsProxy) continue;
+    if (!(await pathExists(m.src))) continue;
     let hash = m.contentHash;
     if (!hash || m.size == null || !m.ext) {
       try {
-        hash = await invoke<string>("hash_file", { path: m.src });
-        const size = await invoke<number>("file_size", { path: m.src });
-        updateMediaLocal(m.id, { contentHash: hash, size, ext: extOf(m.src) });
+        hash = await store!.hash(m.src);
+        const size = await store!.size(m.src);
+        // A browser-imported file's src is a blob: URL with no extension.
+        updateMediaLocal(m.id, { contentHash: hash, size, ext: extOf(m.src.startsWith("blob:") ? m.name : m.src) });
       } catch (err) {
         console.error("hash_file failed for", m.src, err);
         continue;
@@ -276,74 +339,234 @@ function activeFetchCount(): number {
 }
 
 /**
- * Media we lack bytes for, in download order: anything placed on the timeline
- * first (that's what the user is about to look at), then library order.
+ * Media we don't hold the original of, in download order: anything placed on
+ * the timeline first (that's what the user is about to look at), then library
+ * order. Includes media we're currently editing on a proxy.
  */
 function missingMediaInOrder(): MediaItem[] {
   const { media, clips } = useEditor.getState();
   const used = new Set<string>();
   for (const c of Object.values(clips)) if ("mediaId" in c) used.add(c.mediaId);
-  const missing = media.filter((m) => !m.src && m.contentHash && m.ext);
+  const missing = media.filter((m) => (!m.src || m.srcIsProxy) && m.contentHash && m.ext);
   return [...missing.filter((m) => used.has(m.id)), ...missing.filter((m) => !used.has(m.id))];
 }
 
-// For each media we don't have bytes for, resolve from cache or queue a fetch
-// from a peer. Downloads run MAX_ACTIVE_FETCHES at a time; the rest wait and are
-// picked up by the scan that runs when the current one finishes.
-async function maybeFetchMissing(): Promise<void> {
-  let queued = 0;
-  for (const m of missingMediaInOrder()) {
-    if (!m.contentHash || !m.ext) continue;
-    if (fetches.has(m.contentHash)) continue;  // in progress
-    const until = cooldowns.get(m.contentHash);
-    if (until != null && Date.now() < until) continue; // recently failed
+/** Whether a missing file should come over as a proxy first. */
+function wantsProxy(m: MediaItem): boolean {
+  return (
+    m.kind === "video" &&
+    !m.srcIsProxy &&
+    (m.size ?? 0) >= PROXY_MIN_BYTES &&
+    !!m.contentHash &&
+    !noProxy.has(m.contentHash)
+  );
+}
 
-    const finalPath = `${cacheDir}/${m.contentHash}.${m.ext}`;
-    let cached = false;
-    try {
-      cached = await invoke<boolean>("path_exists", { path: finalPath });
-    } catch {
-      cached = false;
-    }
-    if (cached) {
-      log("resolved", m.name, "from local cache");
-      setMediaSrcLocal(m.id, finalPath);
+const cachedFullPath = (hash: string, ext: string) => `${cacheDir}/${hash}.${ext}`;
+
+/**
+ * Where an original goes when the user picked a download folder (#55): its real
+ * name plus a short hash so two different files called "clip.mp4" can't collide.
+ */
+function savedFullPath(m: MediaItem): string | null {
+  if (!saveDir || !m.contentHash || !m.ext) return null;
+  const stem =
+    m.name
+      .replace(/\.[^.]+$/, "")
+      .replace(/[<>:"/\\|?*\x00-\x1f]/g, "_")
+      .trim() || "media";
+  return `${saveDir}/${stem} [${m.contentHash.slice(0, 8)}].${m.ext}`;
+}
+const proxyCachePath = (hash: string) => `${cacheDir}/${hash}.proxy.mp4`;
+
+interface Job {
+  media: MediaItem;
+  variant: TransferVariant;
+  finalPath: string;
+}
+
+// For each media we don't hold the original of: resolve from cache, or queue
+// fetches from a peer — every proxy first (so the whole project becomes
+// editable as fast as possible), then the originals. Downloads run
+// MAX_ACTIVE_FETCHES at a time; the rest wait for the scan that runs when the
+// current one finishes.
+async function maybeFetchMissing(): Promise<void> {
+  const proxyJobs: Job[] = [];
+  const fullJobs: Job[] = [];
+
+  for (const m of missingMediaInOrder()) {
+    const hash = m.contentHash!;
+    const saved = savedFullPath(m);
+    const cached = cachedFullPath(hash, m.ext!);
+    const fullPath = saved ?? cached;
+    const proxyPath = proxyCachePath(hash);
+
+    const existing =
+      saved && (await pathExists(saved)) ? saved : (await pathExists(cached)) ? cached : null;
+    if (existing) {
+      log("resolved", m.name, "from", existing);
+      await adoptOriginal(m.id, existing);
       continue;
     }
+    if (wantsProxy(m)) {
+      if (await pathExists(proxyPath)) {
+        log("resolved", m.name, "proxy from local cache");
+        await setMediaSrcLocal(m.id, proxyPath, true);
+      } else {
+        proxyJobs.push({ media: m, variant: "proxy", finalPath: proxyPath });
+      }
+    }
+    fullJobs.push({ media: m, variant: "full", finalPath: fullPath });
+  }
 
-    const holders = holdersOf(m.contentHash, new Set());
+  hintProxies(proxyJobs);
+
+  // From here on everything is synchronous, so the `fetches.has` check and the
+  // `fetches.set` inside beginFetch can't interleave with an overlapping scan.
+  let queued = 0;
+  for (const job of [...proxyJobs, ...fullJobs]) {
+    const hash = job.media.contentHash!;
+    const key = fetchKey(hash, job.variant);
+    if (fetches.has(key)) continue; // in progress
+    const until = cooldowns.get(key);
+    if (until != null && Date.now() < until) continue; // recently failed
+    const holders = holdersOf(hash, new Set());
     if (holders.length === 0) continue; // nobody reachable has it — retry next scan
     if (activeFetchCount() >= MAX_ACTIVE_FETCHES) {
       queued++;
       continue;
     }
-    log("need", m.name, "hash", m.contentHash.slice(0, 8), "holders", holders);
-    void beginFetch(m, finalPath);
+    log("need", job.variant, job.media.name, "hash", hash.slice(0, 8), "holders", holders);
+    beginFetch(job);
   }
   setQueued(queued);
+  // Originals still to come, plus the ones that already landed this session.
+  setFilesProgress(filesDone, filesDone + fullJobs.length);
 }
 
-function setMediaSrcLocal(id: string, path: string): void {
+/**
+ * Tell holders which proxies we're going to ask for, so they can encode the
+ * next ones while the current one is still on the wire instead of only
+ * starting when we ask.
+ */
+function hintProxies(jobs: Job[]): void {
+  for (const job of jobs) {
+    const hash = job.media.contentHash!;
+    const holder = holdersOf(hash, new Set())[0];
+    if (holder == null) continue;
+    const tag = `${holder}:${hash}`;
+    if (hinted.has(tag)) continue;
+    const chan = channels?.byClientId(holder);
+    if (!chan) continue;
+    hinted.add(tag);
+    chan.sendControl({ t: "prep", hash });
+  }
+}
+
+async function setMediaSrcLocal(id: string, path: string, proxy = false): Promise<void> {
   // src is per-peer local and stripped by the reconciler, so this never syncs.
-  updateMediaLocal(id, { src: path });
+  // In the browser a cache path isn't playable; the store hands back a blob URL.
+  const src = store ? await store.toSrc(path) : path;
+  updateMediaLocal(id, { src, srcIsProxy: proxy || undefined });
+  void ensureStreamFiles(id, src, proxy ? "proxy" : "full");
+}
+
+/** mediaId -> the file its audio streams were last extracted from. */
+const streamsExtractedFrom = new Map<string, string>();
+
+/**
+ * Give a fetched multi-track video its own per-stream audio files, like the
+ * import on the holder's side does. The track *list* (names, mutes) arrives
+ * with the project; only the files are local. Without them every per-track
+ * clip plays the whole muxed mix and the audio doubles up (#58).
+ *
+ * Runs again when the original replaces a proxy (the proxy keeps every audio
+ * stream, so it works for that too). Each source gets its own folder: the old
+ * files may still be open in the preview, and Windows won't overwrite those.
+ */
+async function ensureStreamFiles(mediaId: string, path: string, tag: "proxy" | "full"): Promise<void> {
+  if (!store?.canExtractStreams) return; // the browser can't split streams; preview dedupes instead
+  const m = useEditor.getState().media.find((x) => x.id === mediaId);
+  if (!m || m.kind !== "video") return;
+  if (streamsExtractedFrom.get(mediaId) === path) return;
+  streamsExtractedFrom.set(mediaId, path);
+  try {
+    const streams = await ffprobeAudioStreams(path);
+    if (streams.length <= 1) return; // one stream: the muxed audio is already right
+    const extracted = await extractAudioTracks({
+      sourcePath: path,
+      mediaId: `${mediaId}/${tag}`,
+      trackCount: streams.length,
+    });
+    const fileByIndex = new Map(extracted.map((e) => [e.index, e.filepath]));
+    useEditor.setState((s) => ({
+      media: s.media.map((cur) => {
+        if (cur.id !== mediaId || cur.src !== path) return cur; // swapped again meanwhile
+        const base =
+          cur.audioTracks && cur.audioTracks.length > 0
+            ? cur.audioTracks // keep the project's names + mutes
+            : streams.map((st) => ({
+                index: st.index,
+                codec: st.codec,
+                channels: st.channels,
+                language: st.language,
+                title: st.title,
+                handlerName: st.handlerName,
+                filepath: "",
+                muted: false,
+              }));
+        return {
+          ...cur,
+          audioTracks: base.map((t) => ({ ...t, filepath: fileByIndex.get(t.index) ?? "" })),
+        };
+      }),
+    }));
+    log("extracted", extracted.length, "audio streams for", m.name);
+  } catch (err) {
+    streamsExtractedFrom.delete(mediaId); // let a later pass retry
+    console.warn("[mediaSync] audio stream extraction failed for", m.name, err);
+  }
+}
+
+/** Switch a media item onto its original file and drop the proxy it replaces. */
+async function adoptOriginal(id: string, path: string): Promise<void> {
+  const m = useEditor.getState().media.find((x) => x.id === id);
+  const wasProxy = !!m?.srcIsProxy;
+  const oldSrc = m?.src ?? "";
+  await setMediaSrcLocal(id, path, false);
+  if (wasProxy && m?.contentHash) {
+    const proxyPath = proxyCachePath(m.contentHash);
+    // The preview may still have the proxy open for a moment; Windows won't
+    // delete an open file, so give it time to let go. Best effort either way.
+    setTimeout(() => {
+      void store?.remove(proxyPath).catch(() => {});
+      if (oldSrc.startsWith("blob:")) URL.revokeObjectURL(oldSrc);
+    }, 10_000);
+  }
 }
 
 // ── Receiving ────────────────────────────────────────────────────────────────
 
-async function beginFetch(m: MediaItem, finalPath: string): Promise<void> {
+function beginFetch(job: Job): void {
+  const m = job.media;
   const hash = m.contentHash;
-  if (!hash || !m.ext || fetches.has(hash)) return;
+  if (!hash) return;
+  const key = fetchKey(hash, job.variant);
+  if (fetches.has(key)) return;
 
   const f: FetchState = {
+    key,
+    variant: job.variant,
     transferId: (crypto.getRandomValues(new Uint32Array(1))[0] || 1) >>> 0,
     hash,
-    ext: m.ext,
     mediaId: m.id,
     name: m.name,
-    partPath: `${finalPath}.part`,
-    finalPath,
+    partPath: `${job.finalPath}.part`,
+    finalPath: job.finalPath,
+    verifyHash: job.variant === "full" ? hash : null,
     written: 0,
-    size: m.size ?? 0,
+    resumeFrom: 0,
+    size: job.variant === "full" ? m.size ?? 0 : 0,
     pending: [],
     pendingBytes: 0,
     blockBytes: null,
@@ -356,16 +579,30 @@ async function beginFetch(m: MediaItem, finalPath: string): Promise<void> {
     rateBytes: 0,
     done: false,
   };
-  fetches.set(hash, f);
-  setTransfer(hash, { name: m.name, total: f.size, received: 0, status: "fetching" });
+  fetches.set(key, f);
+  setTransfer(key, { name: m.name, variant: job.variant, total: f.size, received: 0, status: "fetching" });
 
-  try {
-    await invoke("remove_file", { path: f.partPath }); // clear any stale partial
-  } catch (err) {
-    console.error("Couldn't clear partial:", err);
-  }
+  // An original picks up where an interrupted attempt stopped (the .part file
+  // survives failures; the final hash check still covers every byte). A proxy
+  // always starts clean — a re-encode on the holder's side changes its bytes.
+  f.writeChain = (async () => {
+    if (job.variant === "full") {
+      const have = await store!.size(f.partPath);
+      if (have > 0 && (f.size === 0 || have < f.size)) {
+        f.resumeFrom = have;
+        f.written = have;
+        f.rateBytes = have;
+        setTransfer(key, { received: have });
+        log("resuming", m.name, "from", have, "bytes");
+      } else if (have > 0) {
+        await store!.remove(f.partPath);
+      }
+    } else {
+      await store!.remove(f.partPath);
+    }
+  })().catch((err) => console.error("Couldn't prepare partial:", err));
 
-  askNextHolder(f);
+  void f.writeChain.then(() => askNextHolder(f));
 }
 
 /** Send `want` to the next holder that hasn't already declined. */
@@ -382,29 +619,43 @@ function askNextHolder(f: FetchState): void {
     askNextHolder(f);
     return;
   }
-  chan.sendControl({ t: "want", id: f.transferId, hash: f.hash, ext: f.ext });
-  log("asked peer", holder, "for", f.name, "transfer", f.transferId);
+  chan.sendControl({ t: "want", id: f.transferId, hash: f.hash, variant: f.variant, offset: f.resumeFrom });
+  log("asked peer", holder, "for", f.variant, f.name, "transfer", f.transferId);
 
   if (f.offerTimer != null) clearTimeout(f.offerTimer);
   f.offerTimer = window.setTimeout(() => {
     f.offerTimer = null;
-    if (f.done || f.written > 0) return;
+    if (f.done) return; // an offer / "preparing" clears this timer
     log("no offer for", f.name, "from peer", holder, "— trying another holder");
     askNextHolder(f);
   }, OFFER_TIMEOUT_MS);
 }
 
-function failFetch(f: FetchState, why: string): void {
-  log("fetch failed for", f.name, "—", why);
+/** Stop a fetch and remove it without counting it as a failure. */
+function endFetch(f: FetchState): void {
   f.done = true;
-  cooldowns.set(f.hash, Date.now() + RETRY_COOLDOWN_MS);
   if (f.offerTimer != null) clearTimeout(f.offerTimer);
-  setTransfer(f.hash, { status: "error", rate: 0 });
-  fetches.delete(f.hash);
+  fetches.delete(f.key);
+}
+
+function failFetch(f: FetchState, why: string): void {
+  log("fetch failed for", f.variant, f.name, "—", why);
+  endFetch(f);
+  cooldowns.set(f.key, Date.now() + RETRY_COOLDOWN_MS);
+  setTransfer(f.key, { status: "error", rate: 0 });
   // Leave the row up briefly so the failure is visible, then let the next scan
   // try again — a holder may come back online.
-  setTimeout(() => clearTransfer(f.hash), 6000);
+  setTimeout(() => clearTransfer(f.key), 6000);
   scheduleScan(); // start the next queued file
+}
+
+/** The holder can't give us a proxy: go straight for the original instead. */
+function skipProxy(f: FetchState, why: string): void {
+  log("no proxy for", f.name, "—", why, "— fetching the original instead");
+  noProxy.add(f.hash);
+  endFetch(f);
+  clearTransfer(f.key);
+  scheduleScan();
 }
 
 function fetchById(transferId: number): FetchState | null {
@@ -417,6 +668,22 @@ function handleControl(chan: MediaChannel, msg: Record<string, unknown>): void {
     case "want":
       void serve(chan, msg);
       return;
+    case "prep":
+      prepareProxyFor(String(msg.hash));
+      return;
+    case "preparing": {
+      // The holder is still encoding our proxy. That's progress, not a stall.
+      const f = fetchById(Number(msg.id));
+      if (!f || f.done) return;
+      if (f.offerTimer != null) {
+        clearTimeout(f.offerTimer);
+        f.offerTimer = null;
+      }
+      f.servingPeerId = chan.peerId;
+      f.progressAt = performance.now();
+      setTransfer(f.key, { status: "preparing", prepPercent: Number(msg.percent) || 0 });
+      return;
+    }
     case "offer": {
       const f = fetchById(Number(msg.id));
       if (!f) return;
@@ -424,17 +691,36 @@ function handleControl(chan: MediaChannel, msg: Record<string, unknown>): void {
         clearTimeout(f.offerTimer);
         f.offerTimer = null;
       }
+      if (f.variant === "proxy" && (msg.variant !== "proxy" || typeof msg.sha !== "string")) {
+        // An older WeEdit that doesn't know proxies answered with the original.
+        chan.sendControl({ t: "cancel", id: f.transferId });
+        skipProxy(f, "holder doesn't support proxies");
+        return;
+      }
+      if (f.variant === "proxy") f.verifyHash = String(msg.sha);
       f.size = Number(msg.size) || f.size;
+      if ((Number(msg.offset) || 0) !== f.resumeFrom) {
+        // The holder is sending from the start (an older WeEdit ignores the
+        // offset): drop our partial so its bytes aren't appended twice.
+        f.resumeFrom = 0;
+        f.written = 0;
+        f.rateBytes = 0;
+        f.writeChain = f.writeChain.then(() => store!.remove(f.partPath)).catch(() => {});
+      }
       f.servingPeerId = chan.peerId;
       f.progressAt = performance.now();
-      setTransfer(f.hash, { total: f.size });
-      log("offer accepted for", f.name, "size", f.size);
+      setTransfer(f.key, { status: "fetching", total: f.size });
+      log("offer accepted for", f.variant, f.name, "size", f.size);
       return;
     }
     case "deny": {
       const f = fetchById(Number(msg.id));
       if (!f) return;
       log("peer declined", f.name, "—", msg.reason);
+      if (f.variant === "proxy" && msg.reason === "proxy unavailable") {
+        skipProxy(f, "holder couldn't make one");
+        return;
+      }
       askNextHolder(f);
       return;
     }
@@ -494,9 +780,7 @@ function handleData(_chan: MediaChannel, transferId: number, payload: Uint8Array
   f.writeChain = f.writeChain
     .then(async () => {
       if (f.done) return;
-      const wrote = await invoke<number>("append_media_block", block.buffer as ArrayBuffer, {
-        headers: { "x-weedit-path": encodePathHeader(f.partPath) },
-      });
+      const wrote = await store!.append(f.partPath, block);
       f.written += wrote;
       f.progressAt = performance.now();
       reportProgress(f);
@@ -516,9 +800,9 @@ function reportProgress(f: FetchState): void {
     const rate = ((f.written - f.rateBytes) * 1000) / dt;
     f.rateAt = now;
     f.rateBytes = f.written;
-    setTransfer(f.hash, { received: f.written, total: f.size, rate });
+    setTransfer(f.key, { received: f.written, total: f.size, rate });
   } else {
-    setTransfer(f.hash, { received: f.written, total: f.size });
+    setTransfer(f.key, { received: f.written, total: f.size });
   }
 }
 
@@ -527,28 +811,135 @@ async function finishFetch(f: FetchState): Promise<void> {
   f.done = true;
   // The link is free now — start the next queued file while this one verifies.
   scheduleScan();
-  setTransfer(f.hash, { status: "verifying", received: f.written, rate: 0 });
+  setTransfer(f.key, { status: "verifying", received: f.written, rate: 0 });
   try {
-    const got = await invoke<string>("hash_file", { path: f.partPath });
-    if (got !== f.hash) {
+    const got = await store!.hash(f.partPath);
+    if (!f.verifyHash || got !== f.verifyHash) {
       console.error("Hash mismatch for fetched media; discarding.");
-      await invoke("remove_file", { path: f.partPath });
-      setTransfer(f.hash, { status: "error" });
-      setTimeout(() => clearTransfer(f.hash), 6000);
+      await store!.remove(f.partPath);
+      cooldowns.set(f.key, Date.now() + RETRY_COOLDOWN_MS);
+      setTransfer(f.key, { status: "error" });
+      setTimeout(() => clearTransfer(f.key), 6000);
       return;
     }
-    await invoke("rename_path", { from: f.partPath, to: f.finalPath });
-    cooldowns.delete(f.hash);
-    setMediaSrcLocal(f.mediaId, f.finalPath);
-    setTransfer(f.hash, { status: "done" });
-    log("fetch complete:", f.finalPath);
-    setTimeout(() => clearTransfer(f.hash), 2500);
+    await store!.rename(f.partPath, f.finalPath);
+    cooldowns.delete(f.key);
+    if (f.variant === "full") {
+      filesDone++;
+      await adoptOriginal(f.mediaId, f.finalPath);
+    } else {
+      // Only if the original hasn't somehow beaten it here.
+      const m = useEditor.getState().media.find((x) => x.id === f.mediaId);
+      if (m && (!m.src || m.srcIsProxy)) await setMediaSrcLocal(f.mediaId, f.finalPath, true);
+    }
+    setTransfer(f.key, { status: "done" });
+    log("fetch complete:", f.variant, f.finalPath);
+    setTimeout(() => clearTransfer(f.key), 2500);
   } catch (err) {
     console.error("finishFetch failed:", err);
-    setTransfer(f.hash, { status: "error" });
+    setTransfer(f.key, { status: "error" });
+    setTimeout(() => clearTransfer(f.key), 6000);
   } finally {
-    fetches.delete(f.hash);
+    fetches.delete(f.key);
   }
+}
+
+// ── Proxies (we hold the original) ───────────────────────────────────────────
+
+/** In-flight or finished proxy encodes, by content hash. Survives sessions: the files are cached on disk. */
+const proxyBuilds = new Map<string, Promise<{ path: string; sha: string; size: number }>>();
+/** Encodes run one at a time so a joiner's whole library doesn't swamp the CPU. */
+let proxyQueue: Promise<unknown> = Promise.resolve();
+/** Encode progress (0..1) of the proxy currently being made, by content hash. */
+const proxyProgress = new Map<string, number>();
+
+/** The original of `hash` that we hold, if any (never a proxy). */
+function heldOriginal(hash: string): MediaItem | null {
+  return (
+    useEditor.getState().media.find((m) => m.contentHash === hash && !!m.src && !m.srcIsProxy) ?? null
+  );
+}
+
+/** A peer told us it will want this proxy soon: start encoding it in the background. */
+function prepareProxyFor(hash: string): void {
+  if (!store?.canMakeProxies) return;
+  const m = heldOriginal(hash);
+  if (!m || m.kind !== "video") return;
+  ensureProxy(m).catch(() => {}); // a failure is reported when it's actually requested
+}
+
+function ensureProxy(m: MediaItem): Promise<{ path: string; sha: string; size: number }> {
+  const hash = m.contentHash!;
+  const existing = proxyBuilds.get(hash);
+  if (existing) return existing;
+  const job = proxyQueue.then(() => buildProxy(m));
+  proxyQueue = job.catch(() => {});
+  proxyBuilds.set(hash, job);
+  job.catch((err) => {
+    console.error("[mediaSync] proxy encode failed for", m.name, err);
+  });
+  return job;
+}
+
+/**
+ * ffmpeg args for a small editing copy: 720p H.264 with a bitrate cap, every
+ * audio stream kept (OBS records several and the editor exposes each), short
+ * GOP so scrubbing stays snappy, and the index up front so it plays at once.
+ */
+function proxyArgs(src: string, out: string): string[] {
+  return [
+    "-y",
+    "-hide_banner",
+    "-i", src,
+    "-map", "0:v:0",
+    "-map", "0:a?",
+    "-sn",
+    "-dn",
+    "-vf", "scale=-2:min(720\\,ih)",
+    "-c:v", "libx264",
+    "-preset", "veryfast",
+    "-crf", "26",
+    "-maxrate", "3M",
+    "-bufsize", "6M",
+    "-g", "60",
+    "-pix_fmt", "yuv420p",
+    "-c:a", "aac",
+    "-b:a", "128k",
+    "-movflags", "+faststart",
+    out,
+  ];
+}
+
+async function buildProxy(m: MediaItem): Promise<{ path: string; sha: string; size: number }> {
+  const hash = m.contentHash!;
+  const dir = `${cacheDir}/proxies`;
+  const out = `${dir}/${hash}.mp4`;
+
+  if (!(await pathExists(out))) {
+    await store!.ensureDir(dir);
+    const tmp = `${dir}/${hash}.tmp.mp4`;
+    const id = `proxy-${hash.slice(0, 16)}-${Date.now()}`;
+    proxyProgress.set(hash, 0);
+    const unlisten = await listen<FfmpegExportProgress>("ffmpeg-progress", (e) => {
+      if (e.payload.id === id && e.payload.percent != null) proxyProgress.set(hash, e.payload.percent);
+    });
+    log("encoding proxy for", m.name);
+    try {
+      await ffmpegRun({ args: proxyArgs(m.src, tmp), exportId: id, totalDurationSec: m.durationSec ?? 0 });
+      await store!.rename(tmp, out);
+    } catch (err) {
+      store!.remove(tmp).catch(() => {});
+      throw err;
+    } finally {
+      unlisten();
+      proxyProgress.delete(hash);
+    }
+    log("proxy ready for", m.name);
+  }
+
+  const sha = await store!.hash(out);
+  const size = await store!.size(out);
+  return { path: out, sha, size };
 }
 
 // ── Serving (we hold the file) ───────────────────────────────────────────────
@@ -556,10 +947,11 @@ async function finishFetch(f: FetchState): Promise<void> {
 async function serve(chan: MediaChannel, msg: Record<string, unknown>): Promise<void> {
   const transferId = Number(msg.id);
   const hash = String(msg.hash);
+  const variant: TransferVariant = msg.variant === "proxy" ? "proxy" : "full";
   const key = `${chan.peerId}:${transferId}`;
   if (sends.has(key)) return;
 
-  const local = useEditor.getState().media.find((m) => m.contentHash === hash && m.src);
+  const local = heldOriginal(hash);
   if (!local?.src) {
     log("got a request for", hash.slice(0, 8), "but I don't hold that file");
     chan.sendControl({ t: "deny", id: transferId, reason: "not held" });
@@ -568,32 +960,75 @@ async function serve(chan: MediaChannel, msg: Record<string, unknown>): Promise<
 
   const state: SendState = { cancelled: false };
   sends.set(key, state);
+  const upKey = `up:${key}`;
+  let outcome: "done" | "error" | "quiet" = "quiet";
+  setTransfer(upKey, {
+    name: local.name,
+    variant,
+    direction: "up",
+    peer: peerName(chan),
+    status: variant === "proxy" ? "preparing" : "fetching",
+    total: variant === "proxy" ? 0 : local.size ?? 0,
+  });
   try {
-    const size = local.size ?? (await invoke<number>("file_size", { path: local.src }));
-    chan.sendControl({ t: "offer", id: transferId, size });
-    log("serving", local.name, size, "bytes to", chan.peerId.slice(0, 8));
+    let path = local.src;
+    let size: number;
+    let sha: string | undefined;
+
+    if (variant === "proxy") {
+      // Keep the receiver posted while ffmpeg works, so it neither times the
+      // request out nor shows a frozen row.
+      const ping = () => {
+        const percent = proxyProgress.get(hash) ?? 0;
+        chan.sendControl({ t: "preparing", id: transferId, percent });
+        setTransfer(upKey, { prepPercent: percent });
+      };
+      ping();
+      const timer = window.setInterval(ping, PREPARING_PING_MS);
+      try {
+        if (!store?.canMakeProxies) throw new Error("this peer can't make proxies");
+        const proxy = await ensureProxy(local);
+        path = proxy.path;
+        size = proxy.size;
+        sha = proxy.sha;
+      } catch {
+        proxyBuilds.delete(hash); // let a later request try again
+        if (chan.channel.readyState === "open") {
+          chan.sendControl({ t: "deny", id: transferId, reason: "proxy unavailable" });
+        }
+        outcome = "error";
+        return;
+      } finally {
+        clearInterval(timer);
+      }
+      if (state.cancelled || chan.channel.readyState !== "open") return;
+    } else {
+      size = local.size ?? (await store!.size(local.src));
+    }
+
+    // Resume: an original can start part-way in, where the receiver's partial
+    // file ends. (A proxy always starts at 0.)
+    const startAt = variant === "full" ? Math.max(0, Math.min(size, Number(msg.offset) || 0)) : 0;
+    chan.sendControl({ t: "offer", id: transferId, size, variant, sha, offset: startAt });
+    const progress: SendProgress = { key: upKey, sent: startAt, size, rateAt: performance.now(), rateBytes: startAt };
+    setTransfer(upKey, { status: "fetching", total: size, received: startAt });
+    log("serving", variant, local.name, size, "bytes to", chan.peerId.slice(0, 8));
 
     // Compression is decided per file from its first block: deflate buys a lot
     // on WAV / image sequences / subtitles and nothing at all on h264/h265, and
     // the sender pays the CPU either way. Probe once, then stick with it.
     let compress: boolean = true;
     let probed = false;
-    const src = local.src;
     const readBlock = (offset: number): Promise<ArrayBuffer> => {
-      const p = invoke<ArrayBuffer>("read_media_block", {
-        path: src,
-        offset,
-        length: Math.min(BLOCK_BYTES, size - offset),
-        compress,
-      });
+      const p = store!.readBlock(path, offset, Math.min(BLOCK_BYTES, size - offset), compress);
       p.catch(() => {}); // if we bail out before awaiting it, don't warn
       return p;
     };
 
     // Read ahead one block: the next disk read (and deflate) runs while the
     // current block is still going out, instead of the link idling on it.
-    let nextRead: Promise<ArrayBuffer> | null = size > 0 ? readBlock(0) : null;
-    for (let offset = 0; offset < size && nextRead; offset += BLOCK_BYTES) {
+    let nextRead: Promise<ArrayBuffer> | null = startAt < size ? readBlock(startAt) : null;
+    for (let offset = startAt; offset < size && nextRead; offset += BLOCK_BYTES) {
       if (state.cancelled || chan.channel.readyState !== "open") {
         log("send cancelled for", local.name);
         return;
@@ -620,19 +1055,34 @@ async function serve(chan: MediaChannel, msg: Record<string, unknown>): Promise<
         await waitForDrain(chan.channel);
         chan.channel.send(dataFrame(transferId, block.subarray(at, at + FRAME_BYTES)));
       }
+      progress.sent = Math.min(size, offset + BLOCK_BYTES);
+      reportSend(progress);
     }
 
     if (!state.cancelled && chan.channel.readyState === "open") {
       chan.sendControl({ t: "end", id: transferId });
-      log("sent all of", local.name);
+      log("sent all of", variant, local.name);
+      outcome = "done";
+    } else if (chan.channel.readyState !== "open") {
+      outcome = "error"; // collaborator left mid-transfer
     }
   } catch (err) {
     console.error("[mediaSync] serve failed:", err);
+    outcome = "error";
     if (chan.channel.readyState === "open") {
       chan.sendControl({ t: "end", id: transferId, error: String(err) });
     }
   } finally {
     sends.delete(key);
+    if (outcome === "done") {
+      setTransfer(upKey, { status: "done", rate: 0 });
+      setTimeout(() => clearTransfer(upKey), 2500);
+    } else if (outcome === "error") {
+      setTransfer(upKey, { status: "error", rate: 0 });
+      setTimeout(() => clearTransfer(upKey), 6000);
+    } else {
+      clearTransfer(upKey); // the receiver cancelled on purpose — nothing to report
+    }
   }
 }
 

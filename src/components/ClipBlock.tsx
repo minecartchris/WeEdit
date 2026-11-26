@@ -298,6 +298,7 @@ export function ClipBlock({ clip, pxPerSec }: ClipBlockProps) {
 
   return (
     <div
+      data-clip-id={clip.id}
       className={[
         "absolute top-1 bottom-1 rounded-md overflow-hidden flex select-none",
         isSelected ? "ring-2 ring-we-teal z-10" : missing ? "ring-1 ring-red-500" : "ring-1 ring-we-border",

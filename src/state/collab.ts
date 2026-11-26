@@ -129,11 +129,12 @@ async function connect(
 
   // Load the heavy collab stack on demand — this is the first point a normal
   // editing session ever touches yjs / y-webrtc / WebRTC.
-  const [{ createSession, destroySession }, { bindEditorToDoc }, { startMediaSync, stopMediaSync }] =
+  const [{ createSession, destroySession }, { bindEditorToDoc }, { startMediaSync, stopMediaSync }, { bindChat }] =
     await Promise.all([
       import("@/lib/collab/collabDoc"),
       import("@/lib/collab/bindStore"),
       import("@/lib/collab/mediaSync"),
+      import("@/lib/collab/chat"),
     ]);
 
   // Joining adopts someone else's project. Detach from any file the user had
@@ -149,7 +150,12 @@ async function connect(
   const bound = bindEditorToDoc(session.maps, isHost);
   unbind = bound.unbind;
   enableLocal = bound.enableLocal;
+  const unbindChat = bindChat(session.doc, session.provider.awareness.clientID, () => ({
+    name: get().selfName,
+    color: get().selfColor,
+  }));
   teardownSession = () => {
+    unbindChat();
     void stopMediaSync();
     destroySession();
   };

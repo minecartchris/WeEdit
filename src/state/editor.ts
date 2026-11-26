@@ -106,6 +106,8 @@ interface EditorState {
   nudgePreviewRate: (delta: number) => void;
   setZoom: (pxPerSec: number) => void;
   selectClip: (id: string | null, additive?: boolean) => void;
+  /** Replace the selection with `ids` (or add them to it when `additive`). */
+  selectClips: (ids: string[], additive?: boolean) => void;
   clearSelection: () => void;
 
   // ── Library
@@ -316,6 +318,10 @@ export const useEditor = create<EditorState>((set, get) => ({
       }
       return { selectedClipIds: [id] };
     }),
+  selectClips: (ids, additive = false) =>
+    set((s) => ({
+      selectedClipIds: additive ? [...new Set([...s.selectedClipIds, ...ids])] : [...new Set(ids)],
+    })),
   clearSelection: () => set({ selectedClipIds: [] }),
 
   // Library

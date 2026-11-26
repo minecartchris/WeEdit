@@ -45,6 +45,7 @@ export function Timeline() {
   const setPlayhead = useEditor((s) => s.setPlayhead);
   const clearSelection = useEditor((s) => s.clearSelection);
   const clipsMap = useEditor((s) => s.clips);
+  const marquee = useMarqueeSelect();
 
   // Actual content end — the rightmost clip edge. Drives the displayed total.
   const contentEndSec = useMemo(() => {
@@ -237,7 +238,11 @@ export function Timeline() {
             </div>
           </div>
           {/* Track rows */}
-          <div onClick={(e) => { if (e.target === e.currentTarget) clearSelection(); }}>
+          <div
+            onMouseDown={marquee.onMouseDown}
+            onClickCapture={marquee.onClickCapture}
+            onClick={(e) => { if (e.target === e.currentTarget) clearSelection(); }}
+          >
             {tracks.map((t) => (
               <TrackRow key={t.id} track={t} totalSec={totalSec} pxPerSec={pxPerSec} />
             ))}
@@ -247,8 +252,94 @@ export function Timeline() {
           </div>
         </div>
       </div>
+      {marquee.box && (
+        <div
+          className="fixed z-50 pointer-events-none border border-we-teal bg-we-teal/15 rounded-sm"
+          style={{
+            left: Math.min(marquee.box.x0, marquee.box.x1),
+            top: Math.min(marquee.box.y0, marquee.box.y1),
+            width: Math.abs(marquee.box.x1 - marquee.box.x0),
+            height: Math.abs(marquee.box.y1 - marquee.box.y0),
+          }}
+        />
+      )}
     </section>
   );
+}
+
+interface MarqueeBox {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+/** Pixels the pointer must travel before a press on empty lane space becomes a box. */
+const MARQUEE_THRESHOLD_PX = 4;
+
+/**
+ * Box selection (#57): press on empty lane space and drag to draw a rectangle;
+ * every clip it touches is selected on release. Shift / Ctrl / Cmd adds to the
+ * current selection instead of replacing it. A press that doesn't move is still
+ * an ordinary click (which clears the selection).
+ *
+ * Hit-testing uses the clips' on-screen rects, so it stays right however the
+ * timeline is zoomed or scrolled — including scrolling mid-drag.
+ */
+function useMarqueeSelect() {
+  const [box, setBox] = useState<MarqueeBox | null>(null);
+  const suppressClick = useRef(false);
+
+  const onMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    const target = e.target as HTMLElement;
+    // Only empty space: the rows container itself or a bare lane.
+    const onEmptyLane = target === e.currentTarget || (target.dataset.trackId != null && target === e.target);
+    if (!onEmptyLane || target.closest("[data-clip-id]")) return;
+
+    const additive = e.shiftKey || e.ctrlKey || e.metaKey;
+    const start = { x: e.clientX, y: e.clientY };
+    let current: MarqueeBox | null = null;
+
+    const onMove = (ev: MouseEvent) => {
+      if (!current) {
+        if (Math.hypot(ev.clientX - start.x, ev.clientY - start.y) < MARQUEE_THRESHOLD_PX) return;
+        current = { x0: start.x, y0: start.y, x1: ev.clientX, y1: ev.clientY };
+      }
+      current = { ...current, x1: ev.clientX, y1: ev.clientY };
+      setBox(current);
+    };
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      if (!current) return; // a plain click — let onClick handle it
+      suppressClick.current = true; // the click that follows this mouseup isn't a "clear"
+      const left = Math.min(current.x0, current.x1);
+      const right = Math.max(current.x0, current.x1);
+      const top = Math.min(current.y0, current.y1);
+      const bottom = Math.max(current.y0, current.y1);
+      const hits: string[] = [];
+      document.querySelectorAll<HTMLElement>("[data-clip-id]").forEach((el) => {
+        const r = el.getBoundingClientRect();
+        // "Inside or touching" the box.
+        if (r.right >= left && r.left <= right && r.bottom >= top && r.top <= bottom) {
+          hits.push(el.dataset.clipId!);
+        }
+      });
+      useEditor.getState().selectClips(hits, additive);
+      setBox(null);
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  };
+
+  const onClickCapture = (e: React.MouseEvent) => {
+    if (!suppressClick.current) return;
+    suppressClick.current = false;
+    e.stopPropagation();
+  };
+
+  return { box, onMouseDown, onClickCapture };
 }
 
 const ZOOM_SLIDER_MIN = 0.1;

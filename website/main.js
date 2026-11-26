@@ -9,6 +9,10 @@
 const OWNER = "minecartchris";
 const REPO = "WeEdit";
 const API = `https://api.github.com/repos/${OWNER}/${REPO}/releases/latest`;
+const RELEASES_API = `https://api.github.com/repos/${OWNER}/${REPO}/releases?per_page=100`;
+// Usage counter (served by the collaboration server). Same-origin through the
+// site's nginx first; the server's own port as a fallback.
+const STATS_URLS = ["/api/stats", "https://weedit.minecartchris.cc:8443/api/stats"];
 
 /** Sort release assets into the platforms we publish. */
 function categorize(assets) {
@@ -108,4 +112,51 @@ async function init() {
   }
 }
 
+/** Total downloads of the installers across every release (not .sig / .json). */
+async function totalDownloads() {
+  let total = 0;
+  for (let page = 1; page <= 5; page++) {
+    const res = await fetch(`${RELEASES_API}&page=${page}`, {
+      headers: { Accept: "application/vnd.github+json" },
+    });
+    if (!res.ok) break;
+    const releases = await res.json();
+    for (const r of releases) {
+      for (const a of r.assets || []) {
+        if (/\.(exe|msi|deb|appimage|rpm)$/i.test(a.name)) total += a.download_count || 0;
+      }
+    }
+    if (releases.length < 100) break;
+  }
+  return total;
+}
+
+async function usageStats() {
+  for (const url of STATS_URLS) {
+    try {
+      const res = await fetch(url, { cache: "no-store" });
+      if (res.ok) return await res.json();
+    } catch {
+      // try the next one
+    }
+  }
+  return null;
+}
+
+const fmt = (n) => (typeof n === "number" ? n.toLocaleString() : "–");
+
+async function initStats() {
+  const [downloads, usage] = await Promise.all([
+    totalDownloads().catch(() => null),
+    usageStats(),
+  ]);
+  if (downloads == null && usage == null) return; // nothing to show — keep it hidden
+  setText("stat-downloads", fmt(downloads));
+  setText("stat-users", fmt(usage && usage.users));
+  setText("stat-active", fmt(usage && usage.active30d));
+  const box = document.getElementById("usage-stats");
+  if (box) box.hidden = false;
+}
+
 init();
+initStats();

@@ -1,7 +1,10 @@
 import { Check, Copy, LogOut, Radio, UserPlus, Users } from "lucide-react";
 import { useMemo, useState } from "react";
+import { CollabDownloadSetting } from "@/components/CollabDownloadSetting";
 import { Modal } from "@/components/ui/Modal";
+import { isTauri } from "@/lib/platform";
 import { useCollab } from "@/state/collab";
+import { pickCollabMediaDir, usePrefs } from "@/state/prefs";
 
 interface Props {
   open: boolean;
@@ -55,6 +58,12 @@ export function CollabModal({ open, onClose }: Props) {
   const onJoin = async () => {
     const code = joinCode.trim();
     if (!code) return;
+    // Saving downloads to a folder of their own, but none chosen yet: ask first.
+    const prefs = usePrefs.getState();
+    if (isTauri() && !prefs.collabMediaTemp && !prefs.collabMediaDir) {
+      const picked = await pickCollabMediaDir();
+      if (!picked) return;
+    }
     setBusy(true);
     try {
       await join(code);
@@ -168,6 +177,8 @@ export function CollabModal({ open, onClose }: Props) {
                 Join
               </button>
             </div>
+
+            <CollabDownloadSetting compact />
 
             <p className="text-[11px] text-we-muted leading-4">
               No accounts, no port forwarding. Joining replaces your current timeline with the

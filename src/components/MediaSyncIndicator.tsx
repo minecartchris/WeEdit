@@ -1,4 +1,4 @@
-import { CheckCircle2, Download, Loader2 } from "lucide-react";
+import { CheckCircle2, Download, Loader2, Upload } from "lucide-react";
 import { useMemo } from "react";
 import { useTransfers, type Transfer } from "@/state/transfers";
 
@@ -7,18 +7,30 @@ import { useTransfers, type Transfer } from "@/state/transfers";
 export function MediaSyncIndicator() {
   const transfersRecord = useTransfers((s) => s.transfers);
   const queued = useTransfers((s) => s.queued);
+  const filesDone = useTransfers((s) => s.filesDone);
+  const filesTotal = useTransfers((s) => s.filesTotal);
+  const downloading = filesTotal > 0 && filesDone < filesTotal;
   const transfers = useMemo(() => Object.values(transfersRecord), [transfersRecord]);
 
-  if (transfers.length === 0 && queued === 0) return null;
+  if (transfers.length === 0 && queued === 0 && !downloading) return null;
 
   return (
     <div className="fixed bottom-4 right-4 z-40 flex flex-col gap-2 w-72">
       {transfers.map((t) => (
         <TransferRow key={t.hash} t={t} />
       ))}
-      {queued > 0 && (
-        <div className="rounded-lg border border-we-border bg-we-panel shadow-lg px-3 py-2 text-xs text-we-muted">
-          {queued} more {queued === 1 ? "file" : "files"} queued
+      {(queued > 0 || downloading) && (
+        <div className="rounded-lg border border-we-border bg-we-panel shadow-lg px-3 py-2 text-xs text-we-muted flex items-center gap-2">
+          {downloading && (
+            <span className="text-we-ink font-medium tabular-nums">
+              {filesDone} / {filesTotal} files complete
+            </span>
+          )}
+          {queued > 0 && (
+            <span className="ml-auto">
+              {queued} more {queued === 1 ? "download" : "downloads"} queued
+            </span>
+          )}
         </div>
       )}
     </div>
@@ -45,8 +57,15 @@ function formatEta(seconds: number): string {
 }
 
 function TransferRow({ t }: { t: Transfer }) {
-  const pct = t.total > 0 ? Math.min(100, Math.round((t.received / t.total) * 100)) : 0;
+  const pct =
+    t.status === "preparing"
+      ? Math.round((t.prepPercent ?? 0) * 100)
+      : t.total > 0
+      ? Math.min(100, Math.round((t.received / t.total) * 100))
+      : 0;
   const active = t.status === "fetching";
+  const up = t.direction === "up";
+  const ErrorIcon = up ? Upload : Download;
   // Speed and remaining time are the whole point of the toast on a big source —
   // "47%" alone doesn't say whether to wait or to go and share the file over the
   // network drive instead.
@@ -66,11 +85,21 @@ function TransferRow({ t }: { t: Transfer }) {
         {t.status === "done" ? (
           <CheckCircle2 className="w-4 h-4 text-we-teal shrink-0" />
         ) : t.status === "error" ? (
-          <Download className="w-4 h-4 text-red-500 shrink-0" />
+          <ErrorIcon className="w-4 h-4 text-red-500 shrink-0" />
+        ) : up ? (
+          <Upload className="w-4 h-4 text-we-teal animate-pulse shrink-0" />
         ) : (
           <Loader2 className="w-4 h-4 text-we-teal animate-spin shrink-0" />
         )}
-        <span className="truncate flex-1">{t.name || "Media"}</span>
+        <span className="truncate flex-1">
+          {t.name || "Media"}
+          {t.variant === "proxy" && <span className="text-we-muted"> · preview copy</span>}
+        </span>
+        {up && (
+          <span className="text-[10px] uppercase tracking-wide text-we-muted shrink-0">
+            {t.peer ? `to ${t.peer}` : "sending"}
+          </span>
+        )}
         <span className="text-xs text-we-muted tabular-nums shrink-0">
           {t.status === "done"
             ? "done"
@@ -78,6 +107,8 @@ function TransferRow({ t }: { t: Transfer }) {
             ? "failed"
             : t.status === "verifying"
             ? "verifying"
+            : t.status === "preparing"
+            ? `encoding ${Math.round((t.prepPercent ?? 0) * 100)}%`
             : t.total > 0
             ? `${pct}%`
             : "…"}
@@ -86,6 +117,13 @@ function TransferRow({ t }: { t: Transfer }) {
       {t.status !== "done" && t.status !== "error" && (
         <div className="h-1 rounded-full bg-we-border overflow-hidden">
           <div className="h-full bg-we-teal transition-[width]" style={{ width: `${pct}%` }} />
+        </div>
+      )}
+      {t.status === "preparing" && (
+        <div className="text-[11px] text-we-muted">
+          {up
+            ? `Making a quick editing copy for ${t.peer ?? "your collaborator"}…`
+            : "Collaborator is making a quick editing copy…"}
         </div>
       )}
       {detail && <div className="text-[11px] text-we-muted tabular-nums">{detail}</div>}

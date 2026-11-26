@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { Inspector } from "@/components/Inspector";
 import { MediaLibrary } from "@/components/MediaLibrary";
+import { CollabChat } from "@/components/CollabChat";
 import { MediaSyncIndicator } from "@/components/MediaSyncIndicator";
 import { Preview } from "@/components/Preview";
 import { Sidebar } from "@/components/Sidebar";
@@ -13,6 +14,7 @@ import { usePlayback } from "@/hooks/usePlayback";
 import { useShortcuts } from "@/hooks/useShortcuts";
 import { useMissingMediaWatcher } from "@/state/missingMedia";
 import { useIntegrations } from "@/state/integrations";
+import { maybeSendUsagePing } from "@/lib/usage";
 import { useLibrary } from "@/state/library";
 import { usePrefs } from "@/state/prefs";
 
@@ -26,7 +28,10 @@ export default function App() {
   const loadPrefs = usePrefs((s) => s.load);
   const loadLibrary = useLibrary((s) => s.load);
   useEffect(() => {
-    void loadPrefs().catch((err) => console.error("Failed to load prefs:", err));
+    void loadPrefs()
+      .catch((err) => console.error("Failed to load prefs:", err))
+      // After prefs, so a user who opted out is never counted.
+      .then(() => maybeSendUsagePing());
     void loadLibrary().catch((err) => console.error("Failed to load library:", err));
     void loadIntegrations().catch((err) => console.error("Failed to load integrations:", err));
   }, [loadIntegrations, loadPrefs, loadLibrary]);
@@ -84,6 +89,7 @@ export default function App() {
         <Timeline />
       </div>
       <MediaSyncIndicator />
+      <CollabChat />
     </div>
   );
 }

@@ -23,6 +23,9 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=
+# Writable /var/lib/weedit-signaling for the usage counter (usage.json); the
+# path reaches the server as $STATE_DIRECTORY.
+StateDirectory=weedit-signaling
 ProtectKernelTunables=true
 ProtectControlGroups=true
 # AF_UNIX/AF_NETLINK included because Node/libuv can need them at startup

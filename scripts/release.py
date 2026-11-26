@@ -23,15 +23,24 @@ Examples
   python scripts/release.py build-linux          # build .deb + .AppImage via WSL
   python scripts/release.py release-all --push    # Windows + Linux, one release
   python scripts/release.py release-all --dry-run # build both, publish nothing
+
+Linux auto-update: when a signing key is available, the Linux build is signed
+too, and release-all / upload-linux add `linux-x86_64-deb` and
+`linux-x86_64-appimage` entries to the release's latest.json, so .deb and
+AppImage installs update themselves like Windows does (the .deb installs via a
+pkexec password prompt).
 """
 
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
+import os
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -41,6 +50,8 @@ PACKAGE_JSON = REPO_ROOT / "package.json"
 RELEASE_PS1 = REPO_ROOT / "scripts" / "release.ps1"
 BUILD_LINUX_SH = REPO_ROOT / "scripts" / "build-linux.sh"
 DIST_LINUX = REPO_ROOT / "dist-linux"
+DEFAULT_KEY_PATH = Path.home() / ".tauri" / "weedit.key"
+SIGN_ENV = ("TAURI_SIGNING_PRIVATE_KEY", "TAURI_SIGNING_PRIVATE_KEY_PASSWORD")
 
 
 def fail(msg: str) -> "NoReturn":  # type: ignore[name-defined]
@@ -198,6 +209,93 @@ def run_windows_release(*, dry_run: bool, push: bool, notes: str | None,
     return subprocess.run(cmd, cwd=REPO_ROOT).returncode
 
 
+def default_distro() -> str:
+    """Ubuntu if it's installed, else Debian, else whatever WSL lists first."""
+    out = subprocess.run(["wsl", "-l", "-q"], capture_output=True)
+    # `wsl -l` writes UTF-16 on Windows.
+    text = out.stdout.decode("utf-16-le", errors="ignore") if out.stdout else ""
+    names = [n.strip().strip("\x00") for n in text.splitlines() if n.strip().strip("\x00")]
+    names = [n for n in names if not n.lower().startswith("docker-desktop")]
+    for preferred in ("Ubuntu", "Debian"):
+        for n in names:
+            if n.lower().startswith(preferred.lower()):
+                return n
+    return names[0] if names else "Ubuntu"
+
+
+def prepare_signing(key_path: str | None, *, required: bool) -> bool:
+    """Load the updater signing key (and its password) into the environment so
+    both the Windows build and the WSL Linux build can sign. Returns whether a
+    key is available. Asks for the password once, up front, instead of having
+    each build prompt for it after minutes of compiling."""
+    if not os.environ.get("TAURI_SIGNING_PRIVATE_KEY"):
+        path = Path(key_path) if key_path else DEFAULT_KEY_PATH
+        if path.exists():
+            os.environ["TAURI_SIGNING_PRIVATE_KEY"] = path.read_text(encoding="utf-8").strip()
+            print(f"==> using signing key {path}")
+        elif required:
+            fail(f"no signing key: set TAURI_SIGNING_PRIVATE_KEY or put the key at {path}")
+        else:
+            print("==> no signing key found -- the Linux build won't be signed for auto-update")
+            return False
+    if "TAURI_SIGNING_PRIVATE_KEY_PASSWORD" not in os.environ and sys.stdin.isatty():
+        pw = getpass.getpass("Signing key password (Enter if it has none): ")
+        if pw:
+            os.environ["TAURI_SIGNING_PRIVATE_KEY_PASSWORD"] = pw
+    # Forward the key + password into WSL without putting them on a command line.
+    forwarded = [f"{name}/u" for name in SIGN_ENV if name in os.environ]
+    existing = [e for e in os.environ.get("WSLENV", "").split(":") if e]
+    os.environ["WSLENV"] = ":".join(dict.fromkeys(existing + forwarded))
+    return True
+
+
+def publish_linux_updater(tag: str, version: str) -> int:
+    """Add the signed Linux bundles to the release's latest.json so installed
+    Linux copies auto-update. Keys follow tauri-plugin-updater's lookup order:
+    `{os}-{arch}-{bundle}` first, then `{os}-{arch}`."""
+    repo = subprocess.run(
+        ["gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
+        cwd=REPO_ROOT, capture_output=True, text=True,
+    ).stdout.strip()
+    if not repo:
+        fail("couldn't determine the GitHub repo (gh repo view).")
+
+    entries: dict[str, dict[str, str]] = {}
+    for bundle, pattern in (("deb", "*.deb"), ("appimage", "*.AppImage")):
+        art = next((p for p in DIST_LINUX.glob(pattern) if f"_{version}_" in p.name), None)
+        sig = art.with_name(art.name + ".sig") if art else None
+        if not art or not sig or not sig.exists():
+            print(f"    (no signed {bundle} for {version}; skipping its updater entry)")
+            continue
+        entries[f"linux-x86_64-{bundle}"] = {
+            "signature": sig.read_text(encoding="utf-8").strip(),
+            "url": f"https://github.com/{repo}/releases/download/{tag}/{art.name}",
+        }
+    if not entries:
+        print("==> no signed Linux bundles -- Linux installs won't auto-update this release")
+        return 0
+    # Plain `linux-x86_64` (no bundle suffix) for older updaters: the AppImage
+    # is the format they knew how to install.
+    if "linux-x86_64-appimage" in entries:
+        entries["linux-x86_64"] = entries["linux-x86_64-appimage"]
+
+    with tempfile.TemporaryDirectory() as tmp:
+        got = subprocess.run(
+            ["gh", "release", "download", tag, "-p", "latest.json", "-D", tmp, "--clobber"],
+            cwd=REPO_ROOT,
+        )
+        if got.returncode != 0:
+            fail(f"couldn't download latest.json from release {tag}")
+        latest_path = Path(tmp) / "latest.json"
+        latest = json.loads(latest_path.read_text(encoding="utf-8-sig"))
+        latest.setdefault("platforms", {}).update(entries)
+        latest_path.write_text(json.dumps(latest, indent=2), encoding="utf-8")
+        print(f"==> adding {', '.join(entries)} to latest.json on {tag}")
+        return subprocess.run(
+            ["gh", "release", "upload", tag, str(latest_path), "--clobber"], cwd=REPO_ROOT,
+        ).returncode
+
+
 def run_linux_build(*, distro: str, no_install: bool, version: str | None = None) -> int:
     """Build the Linux .deb + .AppImage in WSL. Returns the child exit code."""
     if not BUILD_LINUX_SH.exists():
@@ -241,7 +339,8 @@ def upload_linux_assets(tag: str, version: str) -> int:
 
 
 def cmd_build_linux(args: argparse.Namespace) -> None:
-    sys.exit(run_linux_build(distro=args.distro, no_install=args.no_install,
+    prepare_signing(None, required=False)
+    sys.exit(run_linux_build(distro=args.distro or default_distro(), no_install=args.no_install,
                              version=args.version))
 
 
@@ -251,7 +350,10 @@ def cmd_upload_linux(args: argparse.Namespace) -> None:
     resume a previous release after a mid-flight fix."""
     tag = args.tag or release_tag()
     version = args.release_version or next_release_version()
-    sys.exit(upload_linux_assets(tag, version))
+    code = upload_linux_assets(tag, version)
+    if code == 0:
+        code = publish_linux_updater(tag, version)
+    sys.exit(code)
 
 
 def cmd_release(args: argparse.Namespace) -> None:
@@ -265,6 +367,9 @@ def cmd_release_all(args: argparse.Namespace) -> None:
     version = next_release_version()
     print(f"==> FULL RELEASE {version}: Windows + Linux"
           + (" (dry run)" if args.dry_run else ""))
+    # One key + password for both platforms, asked for before any building.
+    prepare_signing(args.key_path, required=True)
+    distro = args.distro or default_distro()
 
     # 1. Windows first -- this is what creates/updates the GitHub release that
     # the Linux artifacts get attached to.
@@ -273,7 +378,7 @@ def cmd_release_all(args: argparse.Namespace) -> None:
         fail("Windows release failed; aborting before the Linux build.")
 
     # 2. Linux build (local artifacts in dist-linux/).
-    if run_linux_build(distro=args.distro, no_install=args.no_install) != 0:
+    if run_linux_build(distro=distro, no_install=args.no_install) != 0:
         state = "built" if args.dry_run else "already published"
         fail(f"Linux build failed. The Windows release is {state}; re-run "
              f"`build-linux` once fixed, then `gh release upload`.")
@@ -284,6 +389,8 @@ def cmd_release_all(args: argparse.Namespace) -> None:
         return
     if upload_linux_assets(release_tag(), version) != 0:
         fail("Linux artifact upload failed.")
+    if publish_linux_updater(release_tag(), version) != 0:
+        fail("Couldn't add the Linux builds to latest.json (Linux installs won't auto-update).")
     print(f"==> Full release {version} done -- Windows + Linux at tag {release_tag()}")
 
 
@@ -306,7 +413,7 @@ def build_parser() -> argparse.ArgumentParser:
     rel.set_defaults(func=cmd_release)
 
     bl = sub.add_parser("build-linux", help="build a Linux .deb + .AppImage via WSL")
-    bl.add_argument("--distro", default="Ubuntu", help="WSL distro to build in (default: Ubuntu)")
+    bl.add_argument("--distro", default=None, help="WSL distro to build in (default: Ubuntu, else Debian)")
     bl.add_argument("--no-install", action="store_true",
                     help="don't auto-install missing build deps; print the commands instead")
     bl.add_argument("--version", default=None,
@@ -321,7 +428,7 @@ def build_parser() -> argparse.ArgumentParser:
     ra.add_argument("--push", action="store_true", help="push HEAD to origin before tagging")
     ra.add_argument("--notes", help="release notes text")
     ra.add_argument("--key-path", help="path to the minisign private key (Windows signing)")
-    ra.add_argument("--distro", default="Ubuntu", help="WSL distro for the Linux build (default: Ubuntu)")
+    ra.add_argument("--distro", default=None, help="WSL distro for the Linux build (default: Ubuntu, else Debian)")
     ra.add_argument("--no-install", action="store_true",
                     help="don't auto-install missing Linux build deps")
     ra.set_defaults(func=cmd_release_all)

@@ -99,15 +99,24 @@ cd "$BUILD_DIR"
 # Inject the release version and drop the Windows-only bundled-ffmpeg resources
 # (resources hardcode binaries/ffmpeg.exe; on Linux we rely on system ffmpeg).
 # This copy is disposable, so edit it in place -- no backup/restore needed.
-node -e '
+#
+# With a signing key in the environment (forwarded from Windows via WSLENV by
+# release.py), also produce signed updater artifacts (.deb.sig, .AppImage.sig)
+# so Linux installs can auto-update. Without one, build unsigned.
+if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then SIGN=1; else SIGN=0; fi
+SIGN="$SIGN" node -e '
   const fs = require("fs");
   const f = "src-tauri/tauri.conf.json";
   const c = JSON.parse(fs.readFileSync(f, "utf8"));
   c.version = process.env.VERSION;
   c.bundle = c.bundle || {};
   c.bundle.resources = {};
+  // ffmpeg comes from the distro; make apt pull it in with the .deb.
+  c.bundle.linux = { ...(c.bundle.linux || {}), deb: { ...((c.bundle.linux || {}).deb || {}), depends: ["ffmpeg"] } };
+  if (process.env.SIGN === "1") c.bundle.createUpdaterArtifacts = true;
   fs.writeFileSync(f, JSON.stringify(c, null, 2) + "\n");
 '
+[ "$SIGN" = "1" ] && log "Signing key present -- building signed updater artifacts" || log "No signing key -- unsigned build (no Linux auto-update)"
 mkdir -p src-tauri/binaries
 
 # --- 5. build -------------------------------------------------------------
@@ -130,10 +139,15 @@ artifacts=(
   src-tauri/target/release/bundle/deb/*.deb
   src-tauri/target/release/bundle/appimage/*.AppImage
 )
+# Updater signatures, when signed (release.py reads them into latest.json).
+sigs=(
+  src-tauri/target/release/bundle/deb/*.deb.sig
+  src-tauri/target/release/bundle/appimage/*.AppImage.sig
+)
 if [ "${#artifacts[@]}" -eq 0 ]; then
   echo "error: no .deb/.AppImage artifacts were produced" >&2
   exit 1
 fi
-for a in "${artifacts[@]}"; do cp -v "$a" "$OUT_DIR/"; done
+for a in "${artifacts[@]}" "${sigs[@]}"; do cp -v "$a" "$OUT_DIR/"; done
 log "Done. Linux artifacts copied to: $OUT_DIR"
 ls -la "$OUT_DIR"

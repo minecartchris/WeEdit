@@ -29,6 +29,9 @@ const DEFAULTS: UiPrefs = {
   sidebarLabels: true,
   snapPlayhead: true,
   keyframeEditorOpen: true,
+  collabMediaTemp: true,
+  collabMediaDir: null,
+  shareUsageStats: true,
 };
 
 interface PrefsState extends UiPrefs {
@@ -48,6 +51,9 @@ interface PrefsState extends UiPrefs {
   setSidebarLabels: (on: boolean) => void;
   setSnapPlayhead: (on: boolean) => void;
   setKeyframeEditorOpen: (on: boolean) => void;
+  setCollabMediaTemp: (on: boolean) => void;
+  setCollabMediaDir: (dir: string | null) => void;
+  setShareUsageStats: (on: boolean) => void;
 }
 
 // Apply the theme to <html>: toggles the `dark` class Tailwind keys off and
@@ -100,6 +106,9 @@ export const usePrefs = create<PrefsState>((set, get) => ({
         sidebarLabels: ui.sidebarLabels ?? DEFAULTS.sidebarLabels,
         snapPlayhead: ui.snapPlayhead ?? DEFAULTS.snapPlayhead,
         keyframeEditorOpen: ui.keyframeEditorOpen ?? DEFAULTS.keyframeEditorOpen,
+        collabMediaTemp: ui.collabMediaTemp ?? DEFAULTS.collabMediaTemp,
+        collabMediaDir: ui.collabMediaDir ?? DEFAULTS.collabMediaDir,
+        shareUsageStats: ui.shareUsageStats ?? DEFAULTS.shareUsageStats,
       };
       set({ ...merged, loaded: true });
       applyTheme(merged.theme);
@@ -156,4 +165,33 @@ export const usePrefs = create<PrefsState>((set, get) => ({
     set({ keyframeEditorOpen });
     void persist({ keyframeEditorOpen });
   },
+  setCollabMediaTemp: (collabMediaTemp) => {
+    set({ collabMediaTemp });
+    void persist({ collabMediaTemp });
+  },
+  setCollabMediaDir: (collabMediaDir) => {
+    set({ collabMediaDir });
+    void persist({ collabMediaDir });
+  },
+  setShareUsageStats: (shareUsageStats) => {
+    set({ shareUsageStats });
+    void persist({ shareUsageStats });
+  },
 }));
+
+/**
+ * Ask for a folder to save collaboration downloads into. Resolves to the
+ * chosen path (also saved as the preference), or null if cancelled.
+ */
+export async function pickCollabMediaDir(): Promise<string | null> {
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const picked = await open({
+    directory: true,
+    multiple: false,
+    title: "Where should media from collaborators be saved?",
+    defaultPath: usePrefs.getState().collabMediaDir ?? undefined,
+  });
+  const dir = Array.isArray(picked) ? picked[0] ?? null : picked;
+  if (dir) usePrefs.getState().setCollabMediaDir(dir);
+  return dir ?? null;
+}

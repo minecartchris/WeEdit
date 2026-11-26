@@ -59,6 +59,11 @@ export function compileExport(input: ExportInputs, opts: ExportOptions): Compile
 
   const ensureSrcInput = (m: MediaItem) => {
     if (mediaSrcInput.has(m.id)) return;
+    if (m.srcIsProxy) {
+      throw new Error(
+        `"${m.name}" is still downloading at full quality from your collaborator — you're editing on a low-quality preview copy. Export once the download finishes.`,
+      );
+    }
     mediaSrcInput.set(m.id, inputPaths.length);
     inputPaths.push(m.src);
   };

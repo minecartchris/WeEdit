@@ -56,6 +56,12 @@ export interface MediaItem {
   size?: number;
   /** Source file extension without the dot (e.g. "mp4") — names the cache file. */
   ext?: string;
+  /**
+   * Collaboration only, per-peer local: `src` currently points at a small
+   * editing copy (proxy) while the original is still downloading. Never synced.
+   * Export refuses to run while any clip uses a proxy.
+   */
+  srcIsProxy?: boolean;
 }
 
 export type TrackKind = "video" | "image" | "audio" | "text";
@@ -261,6 +267,16 @@ export interface UiPrefs {
   snapPlayhead: boolean;
   /** Whether the keyframe editor panel below the preview is expanded. */
   keyframeEditorOpen: boolean;
+  /**
+   * Collaboration downloads: true keeps media fetched from collaborators in
+   * WeEdit's own cache folder; false saves it, under its real name, into
+   * `collabMediaDir` so it stays on your drive like any other footage (#55).
+   */
+  collabMediaTemp: boolean;
+  /** Folder for collaboration downloads when `collabMediaTemp` is off. */
+  collabMediaDir: string | null;
+  /** Send the anonymous "this install was used" ping behind the website's user counter. */
+  shareUsageStats: boolean;
 }
 
 export interface ProjectMeta {

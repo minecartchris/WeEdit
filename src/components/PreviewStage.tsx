@@ -134,7 +134,9 @@ function VideoLayer({
   clipStyle?: React.CSSProperties;
 }) {
   const ref = useRef<HTMLVideoElement>(null);
-  const audioTracks = media.audioTracks ?? [];
+  // Only streams we actually have a local file for (a collaborator may know
+  // the track list before its extraction has run here).
+  const audioTracks = (media.audioTracks ?? []).filter((t) => t.filepath);
   const mutedTracks = clip.mutedTracks ?? [];
   // Per-stream audio takeover: only mute the muxed <video> audio and route sound
   // through individual extracted <audio> siblings when the user has actually
@@ -772,6 +774,12 @@ function collectActiveAudios(
   playheadSec: number,
 ): ActiveAudio[] {
   const out: ActiveAudio[] = [];
+  // Per-stream clips of one multi-track source (e.g. Mic / Game / Discord each
+  // detached onto its own track) can only be told apart once the streams are
+  // extracted to their own files. Until then each would play the full muxed
+  // mix, so the same audio is heard several times over (#58). Play that mix
+  // once per source + sync offset instead.
+  const muxedSeen = new Set<string>();
   for (const track of tracks) {
     // Collect audio from dedicated audio tracks AND from video tracks that have
     // had their audio detached (kind === "audio" clips sitting on a video track).
@@ -786,6 +794,14 @@ function collectActiveAudios(
       if (c.startSec <= playheadSec && playheadSec < c.startSec + c.durationSec) {
         const m = media.find((mm) => mm.id === (c as MediaClip).mediaId);
         if (!m) continue;
+        const mc = c as MediaClip;
+        const hasStreamFiles = (m.audioTracks ?? []).some((t) => t.filepath);
+        if (!hasStreamFiles && (m.audioTracks?.length ?? 0) > 1) {
+          const speed = mc.speed ?? 1;
+          const key = `${m.id}:${(mc.startSec - mc.sourceInSec / speed).toFixed(3)}:${speed}`;
+          if (muxedSeen.has(key)) continue;
+          muxedSeen.add(key);
+        }
         out.push({
           trackId: track.id,
           clip: c as MediaClip,

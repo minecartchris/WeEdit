@@ -356,6 +356,8 @@ function MediaCard({ item, onError }: { item: MediaItem; onError: (msg: string |
       title={
         missing
           ? `${item.name} — file not found at ${item.src}. Click "Replace file…" to locate it.`
+          : item.srcIsProxy
+          ? `${item.name} — editing on a low-quality preview copy while the original downloads from your collaborator. Export unlocks when it lands.`
           : `${item.name} — drag to a track, or double-click to add at playhead`
       }
       onMouseDown={(e) => startMediaDrag(e, item)}
@@ -371,6 +373,11 @@ function MediaCard({ item, onError }: { item: MediaItem; onError: (msg: string |
           />
         ) : (
           <KindIcon kind={item.kind} />
+        )}
+        {item.srcIsProxy && (
+          <span className="absolute bottom-1 left-1 px-1.5 py-0.5 rounded bg-amber-500/90 text-black text-[10px] font-medium">
+            Preview
+          </span>
         )}
         {item.durationSec != null && (
           <span className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded bg-black/70 text-white text-[10px] tabular-nums">

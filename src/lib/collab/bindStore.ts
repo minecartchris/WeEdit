@@ -2,7 +2,7 @@ import * as Y from "yjs";
 import { normalizeClips } from "@/lib/clips";
 import { LOCAL_ORIGIN, type CollabMaps } from "@/lib/collab/collabDoc";
 import { useEditor } from "@/state/editor";
-import type { Clip, MediaItem, ProjectMeta, Track } from "@/types";
+import type { AudioTrackInfo, Clip, MediaItem, ProjectMeta, Track } from "@/types";
 
 // Reconciling bridge between the Zustand editor store and the shared Y.Doc.
 //
@@ -52,8 +52,30 @@ function reconcileList(map: Y.Map<unknown>, byId: Record<string, unknown>): void
 // extracted-audio filepaths) are per-peer local paths that must never propagate.
 // We always store media in the doc with those stripped, so each peer keeps its
 // own local resolution and src-only changes never cause doc churn.
+//
+// The audio-track *metadata* (names, per-stream mutes, which streams exist) does
+// sync — only each stream's local `filepath` is blanked. Dropping the whole list
+// (as this used to) left joiners unable to play a single stream: every detached
+// per-track clip fell back to the full muxed mix, so a 3-track OBS recording
+// played its audio three times over, slightly out of step (#58).
 function stripMediaLocal(m: MediaItem): MediaItem {
-  return { ...m, src: "", thumbnail: m.thumbnail, audioTracks: undefined };
+  return {
+    ...m,
+    src: "",
+    srcIsProxy: undefined,
+    thumbnail: m.thumbnail,
+    audioTracks: m.audioTracks?.map((t) => ({ ...t, filepath: "" })),
+  };
+}
+
+/** Remote track metadata + our own extracted files, matched by stream index. */
+function mergeAudioTracks(
+  remote: AudioTrackInfo[] | undefined,
+  local: AudioTrackInfo[] | undefined,
+): AudioTrackInfo[] | undefined {
+  if (!remote || remote.length === 0) return local;
+  const fileByIndex = new Map((local ?? []).map((t) => [t.index, t.filepath]));
+  return remote.map((t) => ({ ...t, filepath: fileByIndex.get(t.index) ?? "" }));
 }
 
 function reconcileMedia(map: Y.Map<unknown>, media: MediaItem[]): void {
@@ -92,9 +114,20 @@ function rebuildStoreFromDoc(maps: CollabMaps): boolean {
   const media = ([...maps.media.values()] as MediaItem[]).map((remote) => {
     const local = localMediaById.get(remote.id);
     if (local && local.src) {
-      return { ...remote, src: local.src, thumbnail: local.thumbnail ?? remote.thumbnail, audioTracks: local.audioTracks };
+      return {
+        ...remote,
+        src: local.src,
+        srcIsProxy: local.srcIsProxy,
+        thumbnail: local.thumbnail ?? remote.thumbnail,
+        audioTracks: mergeAudioTracks(remote.audioTracks, local.audioTracks),
+      };
     }
-    return { ...remote, src: local?.src ?? "", audioTracks: undefined };
+    return {
+      ...remote,
+      src: local?.src ?? "",
+      srcIsProxy: undefined,
+      audioTracks: mergeAudioTracks(remote.audioTracks, undefined),
+    };
   });
 
   const tracksById = new Map<string, Track>();

@@ -35,6 +35,9 @@ import { formatTimecode, useEditor } from "@/state/editor";
 import { usePrefs } from "@/state/prefs";
 import type { Clip, Track, TrackKind } from "@/types";
 
+// Stable empty list: a fresh [] in a selector re-renders forever (React #185).
+const NO_MARKERS: import("../types").Marker[] = [];
+
 // Bottom panel: editor toolbar + time ruler + track list. Phase 1.5 wires up
 // clip rendering, drag/trim, drop, split, delete, undo/redo, and per-clip A/O.
 export function Timeline() {
@@ -485,7 +488,7 @@ function TimelineToolbar({
 }
 
 function MarkerMenu() {
-  const markers = useEditor((s) => s.project.markers ?? []);
+  const markers = useEditor((s) => s.project.markers ?? NO_MARKERS);
   const [copied, setCopied] = useState(false);
   const add = () => {
     const ed = useEditor.getState();
@@ -863,7 +866,7 @@ function DropAffordanceArt() {
  * the same ones.
  */
 function RulerMarkers({ pxPerSec }: { pxPerSec: number }) {
-  const markers = useEditor((s) => s.project.markers ?? []);
+  const markers = useEditor((s) => s.project.markers ?? NO_MARKERS);
   return (
     <>
       {markers.map((m) => (

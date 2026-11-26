@@ -2,6 +2,7 @@ import {
   ArrowDown,
   ArrowLeftToLine,
   ArrowUp,
+  Bookmark,
   ChevronDown,
   Image as ImageIcon,
   Magnet,
@@ -29,6 +30,7 @@ import { MAX_VOLUME } from "@/lib/audioGain";
 import { ContextMenu, ContextMenuItem } from "@/components/ui/ContextMenu";
 import { clipEdgeAnchors, gapAt, isMediaCompatibleWithTrack, snapToAnchors } from "@/lib/clips";
 import { autoLabelAudioTracks } from "@/lib/trackLabels";
+import { markersToChapters } from "@/lib/shuttle";
 import { formatTimecode, useEditor } from "@/state/editor";
 import { usePrefs } from "@/state/prefs";
 import type { Clip, Track, TrackKind } from "@/types";
@@ -437,6 +439,10 @@ function TimelineToolbar({
 
       <Sep />
 
+      <MarkerMenu />
+
+      <Sep />
+
       <ToolbarButton
         icon={Magnet}
         label="Snap"
@@ -475,6 +481,63 @@ function TimelineToolbar({
         <Search className="w-4 h-4 text-we-muted" />
       </div>
     </div>
+  );
+}
+
+function MarkerMenu() {
+  const markers = useEditor((s) => s.project.markers ?? []);
+  const [copied, setCopied] = useState(false);
+  const add = () => {
+    const ed = useEditor.getState();
+    ed.addMarker(ed.playheadSec);
+  };
+  const copyChapters = async () => {
+    try {
+      await navigator.clipboard.writeText(markersToChapters(markers));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch (err) {
+      console.error("Clipboard write failed:", err);
+    }
+  };
+  return (
+    <Menu
+      trigger={({ onClick }) => (
+        <button onClick={onClick} className="we-btn-ghost" title="Markers & chapters (M adds one at the playhead)">
+          <Bookmark className="w-4 h-4 text-we-muted" />
+          Markers{markers.length > 0 ? ` (${markers.length})` : ""}
+          <ChevronDown className="w-3.5 h-3.5" />
+        </button>
+      )}
+    >
+      <MenuLabel>Markers</MenuLabel>
+      <MenuItem icon={Bookmark} onSelect={add} shortcut="M">
+        Add marker at playhead
+      </MenuItem>
+      <MenuItem disabled={markers.length === 0} onSelect={() => void copyChapters()}>
+        {copied ? "Copied!" : "Copy as YouTube chapters"}
+      </MenuItem>
+      <MenuItem
+        disabled={markers.length === 0}
+        onSelect={() => {
+          if (window.confirm(`Delete all ${markers.length} markers?`)) useEditor.getState().clearMarkers();
+        }}
+      >
+        Clear all markers
+      </MenuItem>
+      {markers.length > 0 && (
+        <>
+          <MenuSeparator />
+          <MenuLabel>Jump to</MenuLabel>
+          {markers.slice(0, 20).map((m) => (
+            <MenuItem key={m.id} onSelect={() => useEditor.getState().setPlayhead(m.sec)}>
+              <span className="font-mono text-[11px] text-we-muted mr-2">{formatTimecode(m.sec, 30).slice(0, 8)}</span>
+              {m.label}
+            </MenuItem>
+          ))}
+        </>
+      )}
+    </Menu>
   );
 }
 
@@ -546,6 +609,7 @@ function Ruler({
   return (
     <div className="relative h-7 overflow-hidden bg-we-panel border-b border-we-border">
       <div className="relative h-full" style={{ width: totalSec * pxPerSec }}>
+        <RulerMarkers pxPerSec={pxPerSec} />
         {ticks.map((s) => (
           <div
             key={s}
@@ -790,5 +854,48 @@ function DropAffordanceArt() {
       <rect x="100" y="34" width="62" height="42" rx="6" stroke="#cbd5e1" strokeDasharray="4 4" />
       <path d="M124 56l8-9 6 7 4-4 8 8h-26z" fill="#cbd5e1" />
     </svg>
+  );
+}
+
+/**
+ * Markers drawn on the ruler. Click jumps to one, double-click renames it,
+ * right-click deletes it. They're part of the project, so collaborators see
+ * the same ones.
+ */
+function RulerMarkers({ pxPerSec }: { pxPerSec: number }) {
+  const markers = useEditor((s) => s.project.markers ?? []);
+  return (
+    <>
+      {markers.map((m) => (
+        <button
+          key={m.id}
+          className="absolute top-0 z-10 h-full flex items-start group"
+          style={{ left: m.sec * pxPerSec - 1 }}
+          title={`${m.label} — click to jump, double-click to rename, right-click to delete`}
+          onMouseDown={(e) => {
+            e.stopPropagation(); // don't start a ruler scrub
+            if (e.button === 0) useEditor.getState().setPlayhead(m.sec);
+          }}
+          onDoubleClick={(e) => {
+            e.stopPropagation();
+            const next = window.prompt("Marker name", m.label);
+            if (next != null && next.trim()) useEditor.getState().renameMarker(m.id, next.trim());
+          }}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (window.confirm(`Delete marker "${m.label}"?`)) useEditor.getState().removeMarker(m.id);
+          }}
+        >
+          <span className="w-0.5 h-full" style={{ backgroundColor: m.color ?? "#f59e0b" }} />
+          <span
+            className="ml-0.5 mt-0.5 px-1 rounded-sm text-[9px] leading-3 text-white max-w-[120px] truncate opacity-90 group-hover:opacity-100"
+            style={{ backgroundColor: m.color ?? "#f59e0b" }}
+          >
+            {m.label}
+          </span>
+        </button>
+      ))}
+    </>
   );
 }

@@ -40,10 +40,10 @@ export function getSession(): CollabSession | null {
 }
 
 /** Create + connect a session for `roomId`. Tears down any existing one first. */
-export function createSession(roomId: string): CollabSession {
+export function createSession(roomId: string, ice?: RTCIceServer[]): CollabSession {
   destroySession();
   const doc = new Y.Doc();
-  const provider = new WebrtcProvider(`weedit-${roomId}`, doc, webrtcProviderOptions());
+  const provider = new WebrtcProvider(`weedit-${roomId}`, doc, webrtcProviderOptions(ice));
   const maps: CollabMaps = {
     project: doc.getMap("project"),
     media: doc.getMap("media"),

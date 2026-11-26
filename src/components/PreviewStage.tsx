@@ -1,4 +1,5 @@
 import { toPlayableUrl } from "@/lib/media";
+import { previewPath } from "@/lib/proxy";
 import { MAX_VOLUME, applyLoudness } from "@/lib/audioGain";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { MAX_SCALE, MIN_SCALE, cropClipPath, isVisualTrack, previousClipOnTrack, resolveTransform, resolveVolume, type ResolvedTransform } from "@/lib/clips";
@@ -217,7 +218,7 @@ function VideoLayer({
       >
         <video
           ref={ref}
-          src={toPlayableUrl(media.src)}
+          src={toPlayableUrl(previewPath(media))}
           playsInline
           preload="auto"
           crossOrigin="anonymous"

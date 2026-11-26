@@ -1,5 +1,6 @@
 import { isTauri } from "@/lib/platform";
-import { WEBSITE_URL, openExternal } from "@/lib/links";
+import { LATEST_RELEASE_URL, WEBSITE_URL, openExternal } from "@/lib/links";
+import { releaseNotes, useAppVersion, type ReleaseNote } from "@/lib/appInfo";
 import {
   Bell,
   FileDown,
@@ -228,7 +229,7 @@ export function TopBar() {
             <strong> Ctrl+S</strong> save, <strong>Ctrl+O</strong> open, <strong>Ctrl+N</strong> new.
           </div>
           <MenuSeparator />
-          <div className="px-3 py-1.5 text-[11px] text-we-muted">WeEdit · v0.0.1</div>
+          <AppVersionLine />
         </Menu>
 
         <Menu
@@ -240,10 +241,7 @@ export function TopBar() {
           )}
         >
           <MenuLabel>What's new</MenuLabel>
-          <div className="px-3 py-2 text-xs text-we-muted max-w-[260px] leading-5">
-            Drop media onto a track, trim, split, undo. Save / open projects to disk
-            with auto-save. Active video clip renders in the preview stage.
-          </div>
+          <WhatsNew />
         </Menu>
       </div>
 
@@ -257,6 +255,67 @@ export function TopBar() {
       <UpdaterDialog open={updaterOpen} onClose={() => setUpdaterOpen(false)} />
       <UpdaterDialog open={autoUpdaterOpen} onClose={() => setAutoUpdaterOpen(false)} silentIfUpToDate />
     </header>
+  );
+}
+
+function AppVersionLine() {
+  const version = useAppVersion();
+  return (
+    <div className="px-3 py-1.5 text-[11px] text-we-muted">
+      WeEdit · {version === "web" ? "web editor" : version ? `v${version}` : "…"}
+    </div>
+  );
+}
+
+// Notes of the newest releases, straight from GitHub (rendered as plain text —
+// release bodies are markdown, so list markers are tidied but nothing is
+// interpreted as HTML).
+function WhatsNew() {
+  const [notes, setNotes] = useState<ReleaseNote[] | null>(null);
+  const current = useAppVersion();
+  useEffect(() => {
+    void releaseNotes().then(setNotes);
+  }, []);
+
+  if (notes == null) {
+    return <div className="px-3 py-2 text-xs text-we-muted">Loading…</div>;
+  }
+  if (notes.length === 0) {
+    return (
+      <div className="px-3 py-2 text-xs text-we-muted max-w-[300px] leading-5">
+        Couldn't reach GitHub.{" "}
+        <button className="underline" onClick={() => void openExternal(LATEST_RELEASE_URL)}>
+          See the latest release
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="max-w-[360px] max-h-[60vh] overflow-y-auto">
+      {notes.map((n) => (
+        <div key={n.url} className="px-3 py-2 border-b border-we-border last:border-b-0">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-we-ink">{n.title}</span>
+            {current && n.title.includes(current) && (
+              <span className="text-[10px] px-1.5 rounded bg-we-teal/15 text-we-teal">installed</span>
+            )}
+          </div>
+          {n.publishedAt && (
+            <div className="text-[10px] text-we-muted">{new Date(n.publishedAt).toLocaleDateString()}</div>
+          )}
+          <p className="mt-1 text-xs text-we-muted leading-5 whitespace-pre-line">
+            {(n.body || "No notes for this release.")
+              .replace(/^#+\s*/gm, "")
+              .replace(/^\s*[-*]\s+/gm, "• ")
+              .replace(/\*\*(.+?)\*\*/g, "$1")
+              .slice(0, 700)}
+          </p>
+          <button className="mt-1 text-[11px] text-we-teal underline" onClick={() => void openExternal(n.url)}>
+            Full notes
+          </button>
+        </div>
+      ))}
+    </div>
   );
 }
 

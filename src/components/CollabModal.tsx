@@ -1,8 +1,9 @@
-import { Check, Copy, LogOut, Radio, UserPlus, Users } from "lucide-react";
+import { Check, Copy, Crown, Eye, LogOut, Pencil, Radio, UserMinus, UserPlus, Users } from "lucide-react";
 import { useMemo, useState } from "react";
 import { CollabDownloadSetting } from "@/components/CollabDownloadSetting";
 import { Modal } from "@/components/ui/Modal";
 import { isTauri } from "@/lib/platform";
+import { desktopInviteLink, webInviteLink } from "@/lib/invites";
 import { useCollab } from "@/state/collab";
 import { pickCollabMediaDir, usePrefs } from "@/state/prefs";
 
@@ -24,24 +25,36 @@ export function CollabModal({ open, onClose }: Props) {
   const start = useCollab((s) => s.start);
   const join = useCollab((s) => s.join);
   const leave = useCollab((s) => s.leave);
+  const myRole = useCollab((s) => s.myRole);
+  const guestRole = useCollab((s) => s.guestRole);
+  const setPeerRole = useCollab((s) => s.setPeerRole);
+  const kickPeer = useCollab((s) => s.kickPeer);
+  const setGuestRole = useCollab((s) => s.setGuestRole);
+  const isHost = myRole === "host";
 
   const peers = useMemo(() => Object.values(peersRecord), [peersRecord]);
   const [joinCode, setJoinCode] = useState("");
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  const shareLink = roomId ? `weedit://join/${roomId}` : "";
+  const [copiedWhat, setCopiedWhat] = useState<"code" | "web" | "app" | null>(null);
 
-  const onCopy = async () => {
+  const copy = async (what: "code" | "web" | "app") => {
     if (!roomId) return;
+    const text = what === "code" ? roomId : what === "web" ? webInviteLink(roomId) : desktopInviteLink(roomId);
     try {
-      await navigator.clipboard.writeText(roomId);
+      await navigator.clipboard.writeText(text);
+      setCopiedWhat(what);
       setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+      setTimeout(() => {
+        setCopied(false);
+        setCopiedWhat(null);
+      }, 1500);
     } catch (err) {
       console.error("Clipboard write failed:", err);
     }
   };
+  const onCopy = () => copy("code");
 
   const onStart = async () => {
     setBusy(true);
@@ -113,7 +126,20 @@ export function CollabModal({ open, onClose }: Props) {
                   {copied ? "Copied" : "Copy"}
                 </button>
               </div>
-              <p className="text-[11px] text-we-muted break-all">{shareLink}</p>
+              <div className="flex flex-wrap gap-2">
+                <button onClick={() => void copy("web")} className="we-btn text-xs py-1" title={roomId ? webInviteLink(roomId) : ""}>
+                  {copiedWhat === "web" ? <Check className="w-3.5 h-3.5 text-we-teal" /> : <Copy className="w-3.5 h-3.5" />}
+                  Copy invite link
+                </button>
+                <button onClick={() => void copy("app")} className="we-btn text-xs py-1" title={roomId ? desktopInviteLink(roomId) : ""}>
+                  {copiedWhat === "app" ? <Check className="w-3.5 h-3.5 text-we-teal" /> : <Copy className="w-3.5 h-3.5" />}
+                  Copy desktop-app link
+                </button>
+              </div>
+              <p className="text-[11px] text-we-muted leading-4">
+                The invite link opens the session in a browser — anyone can join with no install. The
+                desktop-app link opens WeEdit directly for people who have it.
+              </p>
             </div>
 
             <div className="flex flex-col gap-2">
@@ -125,11 +151,63 @@ export function CollabModal({ open, onClose }: Props) {
               </div>
               {peers.map((p) => (
                 <div key={p.clientId} className="flex items-center gap-2 text-sm text-we-ink">
-                  <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: p.color }} />
-                  {p.name}
+                  <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: p.color }} />
+                  <span className="truncate">{p.name}</span>
+                  {p.role === "host" ? (
+                    <span className="ml-auto flex items-center gap-1 text-[11px] text-amber-600">
+                      <Crown className="w-3.5 h-3.5" /> Host
+                    </span>
+                  ) : isHost ? (
+                    <span className="ml-auto flex items-center gap-1">
+                      <select
+                        value={p.role}
+                        onChange={(e) => setPeerRole(p.pid, e.target.value as "edit" | "view")}
+                        className="we-input py-0.5 text-xs w-auto"
+                        title="What this person can do"
+                      >
+                        <option value="edit">Can edit</option>
+                        <option value="view">View only</option>
+                      </select>
+                      <button
+                        onClick={() => {
+                          if (window.confirm(`Remove ${p.name} from the session?`)) kickPeer(p.pid);
+                        }}
+                        className="we-btn-ghost p-1 text-red-600"
+                        title={`Remove ${p.name} from the session`}
+                      >
+                        <UserMinus className="w-3.5 h-3.5" />
+                      </button>
+                    </span>
+                  ) : (
+                    <span className="ml-auto flex items-center gap-1 text-[11px] text-we-muted">
+                      {p.role === "view" ? <Eye className="w-3.5 h-3.5" /> : <Pencil className="w-3.5 h-3.5" />}
+                      {p.role === "view" ? "View only" : "Editor"}
+                    </span>
+                  )}
                 </div>
               ))}
             </div>
+
+            {isHost ? (
+              <label className="flex items-center gap-2 text-xs text-we-muted">
+                New people who join can
+                <select
+                  value={guestRole}
+                  onChange={(e) => setGuestRole(e.target.value as "edit" | "view")}
+                  className="we-input py-0.5 text-xs w-auto"
+                >
+                  <option value="edit">edit</option>
+                  <option value="view">only watch</option>
+                </select>
+              </label>
+            ) : (
+              <p className="text-xs text-we-muted flex items-center gap-1.5">
+                {myRole === "view" ? <Eye className="w-3.5 h-3.5" /> : <Pencil className="w-3.5 h-3.5" />}
+                {myRole === "view"
+                  ? "You're view-only in this session — the host can give you edit access."
+                  : "You can edit this project."}
+              </p>
+            )}
 
             <p className="text-[11px] text-we-muted leading-4">
               Public signaling can be flaky on strict home networks. Edits and cursors sync live;

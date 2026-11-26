@@ -23,6 +23,9 @@ export function SettingsModal({ open, onClose }: Props) {
         <EditorSection />
         <TimelineSection />
         <AutosaveSection />
+        <PlaybackSection />
+        <CaptionsSection />
+        <TwitchChatSection />
         <CollaborationSection />
         <PrivacySection />
         <ShortcutsSection />
@@ -271,6 +274,88 @@ function AutosaveSection() {
             onCommit={(versionIntervalMin) => setAutosave({ versionIntervalMin })}
           />
         </Row>
+      </div>
+    </Section>
+  );
+}
+
+function PlaybackSection() {
+  const on = usePrefs((s) => s.useLocalProxies);
+  const setPref = usePrefs((s) => s.setPref);
+  if (!isTauri()) return null;
+  return (
+    <Section title="Playback">
+      <div className="flex flex-col divide-y divide-we-border rounded-lg border border-we-border overflow-hidden">
+        <Row
+          label="Smooth playback for big videos"
+          hint="Make a small 720p editing copy of videos over 1 GB or above 1080p and play that in the preview. Export always uses the original."
+        >
+          <Toggle on={on} onChange={(v) => setPref("useLocalProxies", v)} />
+        </Row>
+      </div>
+    </Section>
+  );
+}
+
+function CaptionsSection() {
+  const path = usePrefs((s) => s.whisperPath);
+  const setPref = usePrefs((s) => s.setPref);
+  if (!isTauri()) return null;
+  const pick = async () => {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const picked = await open({ multiple: false, title: "Locate whisper.cpp (whisper-cli)" });
+    const p = Array.isArray(picked) ? picked[0] : picked;
+    if (p) setPref("whisperPath", p);
+  };
+  return (
+    <Section
+      title="Captions"
+      hint="Auto-captions run whisper.cpp on this computer. Get whisper-cli from github.com/ggml-org/whisper.cpp/releases; the speech model downloads from the captions dialog."
+    >
+      <div className="flex items-center gap-2">
+        <code className="flex-1 min-w-0 truncate rounded bg-we-panel border border-we-border px-2 py-1 text-[11px] text-we-ink">
+          {path ?? "Looking on PATH (whisper-cli)"}
+        </code>
+        <button onClick={() => void pick()} className="we-btn text-xs py-1 shrink-0">
+          Locate…
+        </button>
+        {path && (
+          <button onClick={() => setPref("whisperPath", null)} className="we-btn text-xs py-1 shrink-0">
+            Reset
+          </button>
+        )}
+      </div>
+    </Section>
+  );
+}
+
+function TwitchChatSection() {
+  const path = usePrefs((s) => s.twitchDownloaderPath);
+  const setPref = usePrefs((s) => s.setPref);
+  if (!isTauri()) return null;
+  const pick = async () => {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const picked = await open({ multiple: false, title: "Locate TwitchDownloaderCLI" });
+    const p = Array.isArray(picked) ? picked[0] : picked;
+    if (p) setPref("twitchDownloaderPath", p);
+  };
+  return (
+    <Section
+      title="Twitch chat"
+      hint="Chat replay overlays and chat-spike highlights use TwitchDownloaderCLI (github.com/lay295/TwitchDownloader/releases)."
+    >
+      <div className="flex items-center gap-2">
+        <code className="flex-1 min-w-0 truncate rounded bg-we-panel border border-we-border px-2 py-1 text-[11px] text-we-ink">
+          {path ?? "Looking on PATH (TwitchDownloaderCLI)"}
+        </code>
+        <button onClick={() => void pick()} className="we-btn text-xs py-1 shrink-0">
+          Locate…
+        </button>
+        {path && (
+          <button onClick={() => setPref("twitchDownloaderPath", null)} className="we-btn text-xs py-1 shrink-0">
+            Reset
+          </button>
+        )}
       </div>
     </Section>
   );

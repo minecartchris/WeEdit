@@ -15,6 +15,8 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Modal } from "@/components/ui/Modal";
+import { RemoteExportPanel } from "@/components/RemoteExport";
+import { isWeb } from "@/lib/platform";
 import {
   EXPORT_PRESETS,
   defaultPresetForAspect,
@@ -41,7 +43,19 @@ type PresetId =
   | "custom"
   | "aspect-default";
 
-export function ExportModal({ open, onClose }: Props) {
+export function ExportModal(props: Props) {
+  // The browser editor has no ffmpeg: it asks a desktop host to export instead.
+  if (isWeb()) {
+    return (
+      <Modal open={props.open} onClose={props.onClose} title="Export project" width="560px">
+        <RemoteExportPanel />
+      </Modal>
+    );
+  }
+  return <DesktopExportModal {...props} />;
+}
+
+function DesktopExportModal({ open, onClose }: Props) {
   const projectName = useEditor((s) => s.project.name);
   const projectPath = useEditor((s) => s.projectPath);
   const aspect = useEditor((s) => s.project.aspectRatio);
@@ -101,6 +115,8 @@ export function ExportModal({ open, onClose }: Props) {
   const [cq, setCq] = useState(21);
   const [audioBitrate, setAudioBitrate] = useState(192);
   const [codec, setCodec] = useState<VideoCodec>("h264_nvenc");
+  const [reframe, setReframe] = useState<"fit" | "fill">("fill");
+  const [reframeFocus, setReframeFocus] = useState(0.5);
   const [outputPath, setOutputPath] = useState<string>("");
   const [resolvingPath, setResolvingPath] = useState(false);
 
@@ -140,6 +156,12 @@ export function ExportModal({ open, onClose }: Props) {
     return { width: p.width, height: p.height, fps: p.fps, cq: p.cq, audioBitrateKbps: p.audioBitrateKbps };
   }, [presetId, isCustom, isAspectDefault, customWidth, customHeight, customFps, cq, audioBitrate, aspectDefault]);
 
+  // Exporting to a different shape than the project (e.g. a 16:9 stream as a
+  // 9:16 Short) offers fit-with-bars or fill-and-crop.
+  const project = useEditor((s) => s.project);
+  const shapeDiffers =
+    Math.abs(project.width / Math.max(1, project.height) - resolved.width / Math.max(1, resolved.height)) > 0.01;
+
   const canExport = clipCount > 0 && !!outputPath.trim() && (!active || active.status === "complete" || active.status === "error" || active.status === "cancelled");
 
   const onStart = async () => {
@@ -151,6 +173,8 @@ export function ExportModal({ open, onClose }: Props) {
       audioBitrateKbps: resolved.audioBitrateKbps,
       videoCodec: codec,
       outputPath: outputPath.trim(),
+      reframe: shapeDiffers ? reframe : "fit",
+      reframeFocus,
     });
   };
 
@@ -222,6 +246,49 @@ export function ExportModal({ open, onClose }: Props) {
             />
           </div>
         </Section>
+
+        {shapeDiffers && (
+          <Section title="Framing">
+            <div className="flex flex-col gap-3">
+              <p className="text-xs text-we-muted">
+                The project is {project.width}×{project.height}; this export is {resolved.width}×{resolved.height}.
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                <PresetCard
+                  checked={reframe === "fill"}
+                  onSelect={() => setReframe("fill")}
+                  title="Fill (crop)"
+                  detail="No bars — crops to the new shape"
+                />
+                <PresetCard
+                  checked={reframe === "fit"}
+                  onSelect={() => setReframe("fit")}
+                  title="Fit (bars)"
+                  detail="Whole frame, black bars"
+                />
+              </div>
+              {reframe === "fill" && (
+                <label className="flex items-center gap-3 text-xs text-we-muted">
+                  Keep
+                  <span>{resolved.width < resolved.height ? "left" : "top"}</span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    value={reframeFocus}
+                    onChange={(e) => setReframeFocus(Number(e.target.value))}
+                    className="flex-1 accent-we-teal"
+                  />
+                  <span>{resolved.width < resolved.height ? "right" : "bottom"}</span>
+                  <button onClick={() => setReframeFocus(0.5)} className="we-btn text-xs py-0.5">
+                    Center
+                  </button>
+                </label>
+              )}
+            </div>
+          </Section>
+        )}
 
         {isCustom && (
           <Section title="Custom settings">

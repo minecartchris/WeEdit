@@ -426,6 +426,12 @@ fn find_ffmpeg_binary(name: &str, custom: Option<&str>) -> Option<String> {
     if command(name).arg("-version").output().is_ok() {
         return Some(name.to_string());
     }
+    // macOS apps launched from Finder get a minimal PATH that misses Homebrew
+    // (and Linux desktop launchers can miss /usr/local), so check the usual
+    // install locations directly.
+    if let Some(found) = unix_tool_candidates(name) {
+        return Some(found);
+    }
     if let Ok(local_appdata) = std::env::var("LOCALAPPDATA") {
         let candidates = [
             format!("{local_appdata}\\Microsoft\\WinGet\\Links\\{name}.exe"),
@@ -514,6 +520,21 @@ async fn ffmpeg_check(custom_path: Option<String>) -> Result<String, String> {
         Ok(format!("{first} ({bin})"))
     })
     .await
+}
+
+/// `name` in the standard non-Windows install locations (Homebrew on Apple
+/// Silicon and Intel, /usr/local, /usr/bin, Linuxbrew).
+fn unix_tool_candidates(name: &str) -> Option<String> {
+    if cfg!(windows) {
+        return None;
+    }
+    for dir in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/home/linuxbrew/.linuxbrew/bin"] {
+        let p = Path::new(dir).join(name);
+        if p.is_file() {
+            return Some(p.to_string_lossy().to_string());
+        }
+    }
+    None
 }
 
 fn find_in_dir(dir: &Path, target_name: &str) -> Option<String> {
@@ -849,6 +870,283 @@ fn ffmpeg_waveform_peaks_blocking(
     }
 
     Ok(WaveformPeaks { peaks, buckets_per_sec: actual_buckets_per_sec })
+}
+
+// ── Silence detection (Remove silence) ──
+
+/// Silent stretches in `[start_sec, start_sec + duration_sec)` of a file's first
+/// audio stream, as `[start, end]` pairs in seconds relative to `start_sec`.
+/// Uses ffmpeg's `silencedetect`: anything quieter than `noise_db` (e.g. -35)
+/// for at least `min_silence_sec` counts.
+#[tauri::command]
+async fn ffmpeg_detect_silence(
+    source_path: String,
+    start_sec: f64,
+    duration_sec: f64,
+    noise_db: f64,
+    min_silence_sec: f64,
+    custom_path: Option<String>,
+) -> Result<Vec<[f64; 2]>, String> {
+    run_blocking("ffmpeg_detect_silence", move || {
+        let bin = find_ffmpeg_binary("ffmpeg", custom_path.as_deref())
+            .ok_or_else(|| FFMPEG_INSTALL_HINT.to_string())?;
+        let filter = format!(
+            "silencedetect=noise={:.1}dB:d={:.3}",
+            noise_db.clamp(-90.0, -5.0),
+            min_silence_sec.clamp(0.05, 30.0)
+        );
+        let output = command(&bin)
+            .args([
+                "-hide_banner",
+                "-nostats",
+                "-ss", &format!("{:.3}", start_sec.max(0.0)),
+                "-t", &format!("{:.3}", duration_sec.max(0.0)),
+                "-i", &source_path,
+                "-vn",
+                "-map", "0:a:0?",
+                "-af", &filter,
+                "-f", "null",
+                "-",
+            ])
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| format!("Failed to run ffmpeg: {e}"))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("ffmpeg silencedetect failed: {}", stderr.trim()));
+        }
+        // silencedetect logs "silence_start: 12.34" / "silence_end: 15.6 | ...".
+        let log = String::from_utf8_lossy(&output.stderr);
+        let num_after = |line: &str, key: &str| -> Option<f64> {
+            let rest = &line[line.find(key)? + key.len()..];
+            rest.trim().split(|c: char| c.is_whitespace() || c == '|').next()?.parse().ok()
+        };
+        let mut ranges = Vec::new();
+        let mut open: Option<f64> = None;
+        for line in log.lines() {
+            if let Some(t) = num_after(line, "silence_start:") {
+                open = Some(t.max(0.0));
+            } else if let Some(t) = num_after(line, "silence_end:") {
+                if let Some(s) = open.take() {
+                    ranges.push([s, t]);
+                }
+            }
+        }
+        // Silence running to the end of the range never logs an end.
+        if let Some(s) = open {
+            ranges.push([s, duration_sec]);
+        }
+        Ok(ranges)
+    })
+    .await
+}
+
+// ── Auto-captions (whisper.cpp) ──
+
+/// whisper.cpp's CLI: a configured path, else the usual names on PATH.
+fn find_whisper_binary(custom: Option<&str>) -> Option<String> {
+    if let Some(p) = custom.filter(|p| !p.is_empty()) {
+        if Path::new(p).is_file() {
+            return Some(p.to_string());
+        }
+    }
+    for name in ["whisper-cli", "whisper-cpp", "whisper"] {
+        if command(name).arg("--help").output().is_ok() {
+            return Some(name.to_string());
+        }
+        if let Some(found) = unix_tool_candidates(name) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+#[tauri::command]
+async fn whisper_check(whisper_path: Option<String>) -> Result<Option<String>, String> {
+    run_blocking("whisper_check", move || Ok(find_whisper_binary(whisper_path.as_deref()))).await
+}
+
+/// Transcribe `[start_sec, start_sec + duration_sec)` of a file's audio with
+/// whisper.cpp and return its JSON output (segments with millisecond offsets
+/// relative to `start_sec`). ffmpeg first resamples to the 16 kHz mono WAV
+/// whisper expects; both temp files are removed afterwards.
+#[tauri::command]
+async fn whisper_transcribe(
+    source_path: String,
+    start_sec: f64,
+    duration_sec: f64,
+    model_path: String,
+    language: String,
+    whisper_path: Option<String>,
+    custom_path: Option<String>,
+) -> Result<String, String> {
+    run_blocking("whisper_transcribe", move || {
+        let ffmpeg = find_ffmpeg_binary("ffmpeg", custom_path.as_deref())
+            .ok_or_else(|| FFMPEG_INSTALL_HINT.to_string())?;
+        let whisper = find_whisper_binary(whisper_path.as_deref()).ok_or_else(|| {
+            "whisper.cpp not found. Install it (https://github.com/ggml-org/whisper.cpp/releases) and point WeEdit at whisper-cli in Settings.".to_string()
+        })?;
+        if !Path::new(&model_path).is_file() {
+            return Err(format!("Speech model not found at {model_path}. Download it in Settings."));
+        }
+
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        let base = std::env::temp_dir().join(format!("weedit-captions-{stamp}"));
+        let wav = base.with_extension("wav");
+        let _wav_guard = TempFile(wav.clone());
+        let json_path = PathBuf::from(format!("{}.json", base.to_string_lossy()));
+        let _json_guard = TempFile(json_path.clone());
+
+        let out = command(&ffmpeg)
+            .args([
+                "-hide_banner", "-loglevel", "error", "-y",
+                "-ss", &format!("{:.3}", start_sec.max(0.0)),
+                "-t", &format!("{:.3}", duration_sec.max(0.0)),
+                "-i", &source_path,
+                "-vn", "-map", "0:a:0?",
+                "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le",
+            ])
+            .arg(&wav)
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| format!("Failed to run ffmpeg: {e}"))?;
+        if !out.status.success() {
+            return Err(format!("ffmpeg audio extract failed: {}", String::from_utf8_lossy(&out.stderr).trim()));
+        }
+
+        let lang = if language.trim().is_empty() { "auto".to_string() } else { language };
+        let out = command(&whisper)
+            .args(["-m", &model_path, "-l", &lang, "-oj", "-ml", "42", "-sow", "-np"])
+            .arg("-f")
+            .arg(&wav)
+            .arg("-of")
+            .arg(&base)
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| format!("Failed to run whisper: {e}"))?;
+        if !out.status.success() {
+            return Err(format!("whisper failed: {}", String::from_utf8_lossy(&out.stderr).trim()));
+        }
+        fs::read_to_string(&json_path).map_err(|e| format!("whisper produced no output: {e}"))
+    })
+    .await
+}
+
+// ── Twitch chat (TwitchDownloaderCLI) ──
+//
+// Chat replay overlays and chat-activity highlights come from a VOD's chat log.
+// TwitchDownloaderCLI (github.com/lay295/TwitchDownloader) downloads the log
+// and can render it to a video; WeEdit only drives it.
+
+fn find_twitch_downloader(custom: Option<&str>) -> Option<String> {
+    if let Some(p) = custom.map(str::trim).filter(|p| !p.is_empty()) {
+        if Path::new(p).is_file() {
+            return Some(p.to_string());
+        }
+    }
+    for name in ["TwitchDownloaderCLI", "twitchdownloadercli"] {
+        if command(name).arg("--help").output().is_ok() {
+            return Some(name.to_string());
+        }
+    }
+    if let Ok(local_appdata) = std::env::var("LOCALAPPDATA") {
+        let c = format!(r"{local_appdata}\Microsoft\WinGet\Links\TwitchDownloaderCLI.exe");
+        if Path::new(&c).is_file() {
+            return Some(c);
+        }
+    }
+    None
+}
+
+const TWITCH_DL_HINT: &str = "TwitchDownloaderCLI not found. Download it from https://github.com/lay295/TwitchDownloader/releases and point WeEdit at it in Settings.";
+
+#[tauri::command]
+async fn twitch_downloader_check(custom_path: Option<String>) -> Result<Option<String>, String> {
+    run_blocking("twitch_downloader_check", move || Ok(find_twitch_downloader(custom_path.as_deref()))).await
+}
+
+fn run_twitch_downloader(bin: &str, args: &[String]) -> Result<(), String> {
+    let out = command(bin)
+        .args(args)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("Failed to run TwitchDownloaderCLI: {e}"))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let mut msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    if msg.is_empty() {
+        msg = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    }
+    // The useful part of its log is at the end.
+    let tail: String = msg.chars().skip(msg.chars().count().saturating_sub(800)).collect();
+    Err(format!("TwitchDownloaderCLI failed: {tail}"))
+}
+
+/// Download the chat of `vod_id` between `begin_sec` and `end_sec` (VOD time)
+/// to `output_path` (JSON, emotes embedded so it can be rendered offline).
+#[tauri::command]
+async fn twitch_chat_download(
+    vod_id: String,
+    begin_sec: f64,
+    end_sec: f64,
+    output_path: String,
+    custom_path: Option<String>,
+) -> Result<(), String> {
+    run_blocking("twitch_chat_download", move || {
+        let bin = find_twitch_downloader(custom_path.as_deref()).ok_or_else(|| TWITCH_DL_HINT.to_string())?;
+        if !vod_id.chars().all(|c| c.is_ascii_digit()) || vod_id.is_empty() {
+            return Err("That doesn't look like a Twitch VOD id (digits only).".into());
+        }
+        if let Some(parent) = Path::new(&output_path).parent() {
+            fs::create_dir_all(parent).map_err(|e| format!("mkdir failed: {e}"))?;
+        }
+        let _ = fs::remove_file(&output_path);
+        let args: Vec<String> = vec![
+            "chatdownload".into(),
+            "--id".into(), vod_id,
+            "-o".into(), output_path,
+            "-b".into(), format!("{}", begin_sec.max(0.0).floor() as u64),
+            "-e".into(), format!("{}", end_sec.max(0.0).ceil() as u64),
+            "-E".into(),
+        ];
+        run_twitch_downloader(&bin, &args)
+    })
+    .await
+}
+
+/// Render a downloaded chat log to a video (`width`×`height`, dark background)
+/// that can sit over the stream as a chat-replay overlay.
+#[tauri::command]
+async fn twitch_chat_render(
+    input_path: String,
+    output_path: String,
+    width: u32,
+    height: u32,
+    custom_path: Option<String>,
+    ffmpeg_custom_path: Option<String>,
+) -> Result<(), String> {
+    run_blocking("twitch_chat_render", move || {
+        let bin = find_twitch_downloader(custom_path.as_deref()).ok_or_else(|| TWITCH_DL_HINT.to_string())?;
+        let ffmpeg = find_ffmpeg_binary("ffmpeg", ffmpeg_custom_path.as_deref())
+            .ok_or_else(|| FFMPEG_INSTALL_HINT.to_string())?;
+        let _ = fs::remove_file(&output_path);
+        let args: Vec<String> = vec![
+            "chatrender".into(),
+            "-i".into(), input_path,
+            "-o".into(), output_path,
+            "-w".into(), width.clamp(200, 1920).to_string(),
+            "-h".into(), height.clamp(200, 2160).to_string(),
+            "--framerate".into(), "30".into(),
+            "--background-color".into(), "#111111".into(),
+            "--ffmpeg-path".into(), ffmpeg,
+        ];
+        run_twitch_downloader(&bin, &args)
+    })
+    .await
 }
 
 // ── ffmpeg export (timeline → mp4 via filter_complex) ──
@@ -1570,7 +1868,22 @@ fn parse_progress(line: &str) -> Option<ProgressLine> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    #[allow(unused_mut)]
+    let mut builder = tauri::Builder::default();
+    // Must be the first plugin: a second launch (e.g. clicking a weedit:// invite
+    // link while WeEdit is open) hands its URL to this instance and exits.
+    #[cfg(desktop)]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }));
+    }
+    builder
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
@@ -1600,6 +1913,12 @@ pub fn run() {
             ffmpeg_nvenc_available,
             ffmpeg_run,
             ffmpeg_cancel,
+            ffmpeg_detect_silence,
+            whisper_check,
+            whisper_transcribe,
+            twitch_downloader_check,
+            twitch_chat_download,
+            twitch_chat_render,
         ])
         .setup(|app| {
             // Locate bundled ffmpeg / ffprobe (shipped via bundle.resources).
@@ -1612,6 +1931,16 @@ pub fn run() {
                     if let Ok(mut guard) = BUNDLED_FFMPEG_DIR.lock() {
                         *guard = Some(bundled);
                     }
+                }
+            }
+
+            // Register weedit:// with the OS at runtime too. Installers register
+            // it already; this covers the AppImage and dev builds. Best effort.
+            #[cfg(any(windows, target_os = "linux"))]
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                if let Err(err) = app.deep_link().register_all() {
+                    eprintln!("deep link registration failed: {err}");
                 }
             }
 

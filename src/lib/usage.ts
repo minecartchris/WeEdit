@@ -1,4 +1,4 @@
-import { SIGNALING } from "@/lib/collab/config";
+import { COLLAB_API } from "@/lib/collab/config";
 import { isTauri } from "@/lib/platform";
 import { usePrefs } from "@/state/prefs";
 
@@ -17,7 +17,7 @@ const LAST_KEY = "weedit.usage.lastPing";
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** https:// origin of the collab server, derived from the signaling wss:// URL. */
-export const USAGE_API = SIGNALING[0].replace(/^ws/, "http").replace(/\/$/, "") + "/api";
+export const USAGE_API = COLLAB_API;
 
 function installId(): string {
   let id = localStorage.getItem(ID_KEY);

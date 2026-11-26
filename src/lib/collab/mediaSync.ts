@@ -2,6 +2,7 @@ import { listen } from "@tauri-apps/api/event";
 import { WebrtcProvider } from "y-webrtc";
 import { createMediaChannels, dataFrame, type MediaChannel } from "@/lib/collab/mediaChannel";
 import { getMediaStore, type MediaStore } from "@/lib/collab/mediaStore";
+import { proxyArgs } from "@/lib/proxy";
 import { isTauri } from "@/lib/platform";
 import { usePrefs } from "@/state/prefs";
 import { extractAudioTracks, ffmpegRun, ffprobeAudioStreams, type FfmpegExportProgress } from "@/lib/ffmpeg";
@@ -92,6 +93,12 @@ const noProxy = new Set<string>();
 /** `${clientId}:${hash}` proxy-prepare hints already sent, so we don't repeat them. */
 const hinted = new Set<string>();
 
+/**
+ * Files we serve that aren't project media — e.g. a video the host exported
+ * for a browser collaborator. Advertised and served exactly like media.
+ */
+const extraFiles = new Map<string, { path: string; name: string; size: number; ext: string }>();
+
 /** Transfers we're receiving, keyed by fetchKey(hash, variant). */
 const fetches = new Map<string, FetchState>();
 /** Transfers we're sending, keyed by `${peerId}:${transferId}`. */
@@ -128,6 +135,9 @@ interface FetchState {
   servingPeerId: string | null;
   /** performance.now() of the last byte written, for the stall watchdog. */
   progressAt: number;
+  /** For a one-off file fetch (not project media): called instead of adopting it. */
+  onDone?: (path: string) => void;
+  onFail?: (why: string) => void;
   rateAt: number;
   rateBytes: number;
   done: boolean;
@@ -308,6 +318,7 @@ async function refreshLocalHashes(): Promise<void> {
     }
     if (hash) have.push(hash);
   }
+  for (const hash of extraFiles.keys()) have.push(hash);
   mainAwareness?.setLocalStateField("have", have);
   log("refreshLocalHashes: advertising have =", have);
 }
@@ -641,6 +652,7 @@ function endFetch(f: FetchState): void {
 function failFetch(f: FetchState, why: string): void {
   log("fetch failed for", f.variant, f.name, "—", why);
   endFetch(f);
+  f.onFail?.(why);
   cooldowns.set(f.key, Date.now() + RETRY_COOLDOWN_MS);
   setTransfer(f.key, { status: "error", rate: 0 });
   // Leave the row up briefly so the failure is visible, then let the next scan
@@ -817,6 +829,7 @@ async function finishFetch(f: FetchState): Promise<void> {
     if (!f.verifyHash || got !== f.verifyHash) {
       console.error("Hash mismatch for fetched media; discarding.");
       await store!.remove(f.partPath);
+      f.onFail?.("the downloaded file didn't match (corrupted in transit)");
       cooldowns.set(f.key, Date.now() + RETRY_COOLDOWN_MS);
       setTransfer(f.key, { status: "error" });
       setTimeout(() => clearTransfer(f.key), 6000);
@@ -824,7 +837,9 @@ async function finishFetch(f: FetchState): Promise<void> {
     }
     await store!.rename(f.partPath, f.finalPath);
     cooldowns.delete(f.key);
-    if (f.variant === "full") {
+    if (f.onDone) {
+      f.onDone(f.finalPath);
+    } else if (f.variant === "full") {
       filesDone++;
       await adoptOriginal(f.mediaId, f.finalPath);
     } else {
@@ -837,6 +852,7 @@ async function finishFetch(f: FetchState): Promise<void> {
     setTimeout(() => clearTransfer(f.key), 2500);
   } catch (err) {
     console.error("finishFetch failed:", err);
+    f.onFail?.(String(err));
     setTransfer(f.key, { status: "error" });
     setTimeout(() => clearTransfer(f.key), 6000);
   } finally {
@@ -855,9 +871,63 @@ const proxyProgress = new Map<string, number>();
 
 /** The original of `hash` that we hold, if any (never a proxy). */
 function heldOriginal(hash: string): MediaItem | null {
-  return (
-    useEditor.getState().media.find((m) => m.contentHash === hash && !!m.src && !m.srcIsProxy) ?? null
-  );
+  const media = useEditor.getState().media.find((m) => m.contentHash === hash && !!m.src && !m.srcIsProxy);
+  if (media) return media;
+  const extra = extraFiles.get(hash);
+  if (!extra) return null;
+  // Shaped like media so serve() handles it the same way; never put in the store.
+  return {
+    id: `file-${hash}`,
+    name: extra.name,
+    kind: "video",
+    src: extra.path,
+    size: extra.size,
+    contentHash: hash,
+    ext: extra.ext,
+    importedAt: 0,
+  };
+}
+
+/** Offer a non-media file (by its content hash) to peers in this session. */
+export async function shareFile(path: string, name: string): Promise<{ hash: string; size: number }> {
+  if (!store) throw new Error("Not in a collaboration session.");
+  const hash = await store.hash(path);
+  const size = await store.size(path);
+  extraFiles.set(hash, { path, name, size, ext: extOf(name) });
+  scheduleScan(true); // re-advertise "have" with it
+  return { hash, size };
+}
+
+/** Is some connected peer advertising this hash yet? */
+export function isHeldByPeer(hash: string): boolean {
+  return holdersOf(hash, new Set()).length > 0;
+}
+
+/**
+ * Download a non-media file a peer shared, with the usual progress toast.
+ * Resolves with something the browser can save/play (a path on desktop, a
+ * blob: URL in the browser).
+ */
+export function fetchFile(hash: string, name: string, size: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (!store) {
+      reject(new Error("Not in a collaboration session."));
+      return;
+    }
+    const ext = extOf(name);
+    const pseudo: MediaItem = { id: `file-${hash}`, name, kind: "video", src: "", size, contentHash: hash, ext, importedAt: 0 };
+    const key = fetchKey(hash, "full");
+    beginFetch({ media: pseudo, variant: "full", finalPath: cachedFullPath(hash, ext) });
+    const f = fetches.get(key);
+    if (!f) {
+      reject(new Error("Couldn't start the download."));
+      return;
+    }
+    f.onDone = (path) => {
+      void store!.toSrc(path).then(resolve, reject);
+    };
+    f.onFail = (why) => reject(new Error(why));
+  });
 }
 
 /** A peer told us it will want this proxy soon: start encoding it in the background. */
@@ -881,37 +951,12 @@ function ensureProxy(m: MediaItem): Promise<{ path: string; sha: string; size: n
   return job;
 }
 
-/**
- * ffmpeg args for a small editing copy: 720p H.264 with a bitrate cap, every
- * audio stream kept (OBS records several and the editor exposes each), short
- * GOP so scrubbing stays snappy, and the index up front so it plays at once.
- */
-function proxyArgs(src: string, out: string): string[] {
-  return [
-    "-y",
-    "-hide_banner",
-    "-i", src,
-    "-map", "0:v:0",
-    "-map", "0:a?",
-    "-sn",
-    "-dn",
-    "-vf", "scale=-2:min(720\\,ih)",
-    "-c:v", "libx264",
-    "-preset", "veryfast",
-    "-crf", "26",
-    "-maxrate", "3M",
-    "-bufsize", "6M",
-    "-g", "60",
-    "-pix_fmt", "yuv420p",
-    "-c:a", "aac",
-    "-b:a", "128k",
-    "-movflags", "+faststart",
-    out,
-  ];
-}
-
 async function buildProxy(m: MediaItem): Promise<{ path: string; sha: string; size: number }> {
   const hash = m.contentHash!;
+  // Already made an editing copy of this file for our own preview? Send that.
+  if (m.previewSrc && (await pathExists(m.previewSrc))) {
+    return { path: m.previewSrc, sha: await store!.hash(m.previewSrc), size: await store!.size(m.previewSrc) };
+  }
   const dir = `${cacheDir}/proxies`;
   const out = `${dir}/${hash}.mp4`;
 

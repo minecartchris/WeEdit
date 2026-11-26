@@ -1,0 +1,100 @@
+# Build WeEdit for macOS and attach it to an existing release.
+#
+# Windows and Linux are built locally by scripts/release.py; a Mac build needs a
+# Mac, so it runs here on GitHub's macOS runners. `release.py release-all`
+# starts this workflow at the end of a release (or run it by hand from the
+# Actions tab with the release's tag and version).
+#
+# One-time setup — repository Settings → Secrets and variables → Actions:
+#   TAURI_SIGNING_PRIVATE_KEY           contents of ~/.tauri/weedit.key
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  its password
+# These sign the updater bundle so Mac installs auto-update like the others.
+#
+# The app is not Apple-notarized (that needs a paid Apple Developer account):
+# the first launch needs right-click → Open. ffmpeg comes from Homebrew
+# (`brew install ffmpeg`), which WeEdit finds on its own.
+
+name: Release macOS
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to attach to (build-<sha>)"
+        required: true
+      version:
+        description: "App version, e.g. 0.1.140"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    runs-on: macos-14
+    env:
+      TAG: ${{ inputs.tag }}
+      VERSION: ${{ inputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Patch config for the macOS build
+        run: |
+          node -e '
+            const fs = require("fs");
+            const f = "src-tauri/tauri.conf.json";
+            const c = JSON.parse(fs.readFileSync(f, "utf8"));
+            c.version = process.env.VERSION;
+            c.bundle = c.bundle || {};
+            c.bundle.resources = {};               // the bundled ffmpeg is Windows-only
+            c.bundle.createUpdaterArtifacts = true; // signed .app.tar.gz for auto-update
+            fs.writeFileSync(f, JSON.stringify(c, null, 2) + "\n");
+          '
+
+      - name: "Build (universal: Apple Silicon + Intel)"
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npx tauri build --target universal-apple-darwin --bundles app,dmg
+
+      - name: Attach to the release + add macOS to latest.json
+        run: |
+          set -euo pipefail
+          B=src-tauri/target/universal-apple-darwin/release/bundle
+          DMG=$(ls "$B"/dmg/*.dmg | head -1)
+          TGZ=$(ls "$B"/macos/*.app.tar.gz | head -1)
+          mkdir -p out
+          cp "$DMG" "out/WeEdit_${VERSION}_universal.dmg"
+          cp "$TGZ" "out/WeEdit_${VERSION}_universal.app.tar.gz"
+          gh release upload "$TAG" out/*.dmg out/*.app.tar.gz --clobber
+
+          if [ -f "$TGZ.sig" ]; then
+            gh release download "$TAG" -p latest.json -D latest --clobber
+            SIG="$(cat "$TGZ.sig")" URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/WeEdit_${VERSION}_universal.app.tar.gz" node -e '
+              const fs = require("fs");
+              const f = "latest/latest.json";
+              const j = JSON.parse(fs.readFileSync(f, "utf8").replace(/^﻿/, ""));
+              const entry = { signature: process.env.SIG, url: process.env.URL };
+              j.platforms = j.platforms || {};
+              for (const k of ["darwin-aarch64", "darwin-x86_64", "darwin-aarch64-app", "darwin-x86_64-app"]) j.platforms[k] = entry;
+              fs.writeFileSync(f, JSON.stringify(j, null, 2));
+            '
+            gh release upload "$TAG" latest/latest.json --clobber
+          else
+            echo "::warning::No updater signature (set the TAURI_SIGNING_PRIVATE_KEY secrets) — Mac installs won't auto-update."
+          fi

@@ -26,6 +26,10 @@ tauri-plugin-fs = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
+# weedit://join/<code> invite links (#3 of the feature list): the OS hands the
+# link to the app, and single-instance forwards it to the already-running
+# window instead of starting a second copy.
+tauri-plugin-deep-link = "2"
 # rustls-tls so we don't drag OpenSSL into a desktop binary; gzip/brotli for
 # the various CDNs Pexels (and future stock providers) redirect to.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "gzip", "brotli"] }
@@ -37,3 +41,6 @@ base64 = "0.22"
 # (miniz_oxide) so no C toolchain is needed; the sender skips it when a block
 # doesn't shrink, which is the common case for already-compressed video.
 flate2 = "1"
+
+[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }

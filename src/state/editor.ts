@@ -146,6 +146,19 @@ interface EditorState {
 
   // ── Clips
   addClip: (clip: Clip) => void;
+  /** Add many clips (onto existing tracks) as one undo step. */
+  insertClips: (clips: Clip[]) => void;
+  addMarker: (sec: number, label?: string, color?: string) => string;
+  addMarkers: (markers: Array<{ sec: number; label: string; color?: string }>) => void;
+  renameMarker: (id: string, label: string) => void;
+  removeMarker: (id: string) => void;
+  clearMarkers: () => void;
+  /**
+   * Remove timeline time ranges `[start, end)` from EVERY track and close them
+   * up (ripple), so everything after each range moves left and stays in sync.
+   * Clips spanning a range are split around it. One undo step.
+   */
+  rippleDeleteRanges: (ranges: Array<[number, number]>) => void;
   removeClip: (id: string) => void;
   updateClip: (id: string, patch: Partial<Clip>) => void;
   /** Patch several clips in one store write — one re-render per drag frame. */
@@ -598,6 +611,131 @@ export const useEditor = create<EditorState>((set, get) => ({
         tracks,
         clips: { ...s.clips, [clipId]: { ...clip, trackId: newTrackId, startSec } as Clip },
       };
+    }),
+  addMarker: (sec, label, color) => {
+    const id = crypto.randomUUID();
+    set((s) => {
+      const existing = s.project.markers ?? [];
+      const marker = { id, sec: Math.max(0, sec), label: label ?? `Marker ${existing.length + 1}`, color };
+      const markers = [...existing, marker].sort((a, b) => a.sec - b.sec);
+      return withHistory(s, { project: { ...s.project, markers } });
+    });
+    return id;
+  },
+  addMarkers: (list) =>
+    set((s) => {
+      if (list.length === 0) return s;
+      const markers = [
+        ...(s.project.markers ?? []),
+        ...list.map((m) => ({ id: crypto.randomUUID(), sec: Math.max(0, m.sec), label: m.label, color: m.color })),
+      ].sort((a, b) => a.sec - b.sec);
+      return withHistory(s, { project: { ...s.project, markers } });
+    }),
+  renameMarker: (id, label) =>
+    set((s) =>
+      withHistory(s, {
+        project: {
+          ...s.project,
+          markers: (s.project.markers ?? []).map((m) => (m.id === id ? { ...m, label } : m)),
+        },
+      }),
+    ),
+  removeMarker: (id) =>
+    set((s) =>
+      withHistory(s, {
+        project: { ...s.project, markers: (s.project.markers ?? []).filter((m) => m.id !== id) },
+      }),
+    ),
+  clearMarkers: () => set((s) => withHistory(s, { project: { ...s.project, markers: [] } })),
+  insertClips: (newClips) =>
+    set((s) => {
+      if (newClips.length === 0) return s;
+      const clips = { ...s.clips };
+      const adds: Record<string, string[]> = {};
+      for (const c of newClips) {
+        clips[c.id] = c;
+        (adds[c.trackId] ??= []).push(c.id);
+      }
+      return withHistory(s, {
+        clips,
+        tracks: s.tracks.map((t) => (adds[t.id] ? { ...t, clipIds: [...t.clipIds, ...adds[t.id]] } : t)),
+      });
+    }),
+  rippleDeleteRanges: (input) =>
+    set((s) => {
+      const EPS = 1e-3;
+      // Merge overlaps, then work from the END of the timeline backwards so a
+      // range's ripple never moves a range still to be processed.
+      const sorted = input
+        .filter(([a, b]) => b - a > EPS)
+        .map(([a, b]) => [Math.max(0, a), b] as [number, number])
+        .sort((x, y) => x[0] - y[0]);
+      const merged: Array<[number, number]> = [];
+      for (const r of sorted) {
+        const last = merged[merged.length - 1];
+        if (last && r[0] <= last[1]) last[1] = Math.max(last[1], r[1]);
+        else merged.push([r[0], r[1]]);
+      }
+      if (merged.length === 0) return s;
+
+      const shiftKeys = <K extends { tSec: number }>(keys: K[] | undefined, by: number) =>
+        keys?.map((k) => ({ ...k, tSec: k.tSec - by })).filter((k) => k.tSec >= 0);
+      // The part of `c` that starts `off` seconds in, placed at `at`, `dur` long.
+      const tail = (c: Clip, id: string, off: number, at: number, dur: number): Clip => {
+        const speed = c.kind === "text" ? 1 : (c as MediaClip).speed ?? 1;
+        const out = {
+          ...c,
+          id,
+          startSec: at,
+          durationSec: dur,
+          sourceInSec: c.sourceInSec + off * speed,
+          keyframes: shiftKeys(c.keyframes, off),
+          transition: undefined,
+        } as Clip;
+        if (c.kind !== "text") {
+          (out as MediaClip).volumeKeyframes = shiftKeys((c as MediaClip).volumeKeyframes, off);
+        }
+        return out;
+      };
+
+      const clips: Record<string, Clip> = { ...s.clips };
+      const adds: Record<string, string[]> = {};
+      const removed = new Set<string>();
+      for (const [a, b] of merged.reverse()) {
+        const cut = b - a;
+        for (const c of Object.values(clips)) {
+          const start = c.startSec;
+          const end = c.startSec + c.durationSec;
+          if (end <= a + EPS) continue; // entirely before the range
+          if (start >= b - EPS) {
+            clips[c.id] = { ...c, startSec: start - cut } as Clip; // after: ripple left
+            continue;
+          }
+          const leftDur = a - start;
+          const rightDur = end - b;
+          if (leftDur > EPS && rightDur > EPS) {
+            clips[c.id] = { ...c, durationSec: leftDur } as Clip;
+            const id = crypto.randomUUID();
+            clips[id] = tail(c, id, b - start, a, rightDur);
+            (adds[c.trackId] ??= []).push(id);
+          } else if (leftDur > EPS) {
+            clips[c.id] = { ...c, durationSec: leftDur } as Clip;
+          } else if (rightDur > EPS) {
+            clips[c.id] = tail(c, c.id, b - start, a, rightDur);
+          } else {
+            delete clips[c.id];
+            removed.add(c.id);
+          }
+        }
+      }
+      return withHistory(s, {
+        clips,
+        tracks: s.tracks.map((t) => ({
+          ...t,
+          clipIds: [...t.clipIds.filter((id) => !removed.has(id)), ...(adds[t.id] ?? [])],
+        })),
+        selectedClipIds: [],
+      });
     }),
   splitAtPlayhead: () =>
     set((s) => {

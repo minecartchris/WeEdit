@@ -3,6 +3,10 @@ import { Inspector } from "@/components/Inspector";
 import { MediaLibrary } from "@/components/MediaLibrary";
 import { CollabChat } from "@/components/CollabChat";
 import { MediaSyncIndicator } from "@/components/MediaSyncIndicator";
+import { RemoteExportPrompts } from "@/components/RemoteExport";
+import { SessionBanner } from "@/components/SessionBanner";
+import { ToolDialogs } from "@/components/ToolDialogs";
+import { useLocalProxies } from "@/lib/proxy";
 import { Preview } from "@/components/Preview";
 import { Sidebar } from "@/components/Sidebar";
 import { Timeline } from "@/components/Timeline";
@@ -14,6 +18,7 @@ import { usePlayback } from "@/hooks/usePlayback";
 import { useShortcuts } from "@/hooks/useShortcuts";
 import { useMissingMediaWatcher } from "@/state/missingMedia";
 import { useIntegrations } from "@/state/integrations";
+import { initInvites } from "@/lib/invites";
 import { maybeSendUsagePing } from "@/lib/usage";
 import { useLibrary } from "@/state/library";
 import { usePrefs } from "@/state/prefs";
@@ -23,6 +28,7 @@ export default function App() {
   useAutoSave();
   usePlayback();
   useMissingMediaWatcher();
+  useLocalProxies();
 
   const loadIntegrations = useIntegrations((s) => s.load);
   const loadPrefs = usePrefs((s) => s.load);
@@ -31,7 +37,10 @@ export default function App() {
     void loadPrefs()
       .catch((err) => console.error("Failed to load prefs:", err))
       // After prefs, so a user who opted out is never counted.
-      .then(() => maybeSendUsagePing());
+      .then(() => {
+        void maybeSendUsagePing();
+        void initInvites(); // after prefs: joining may need the download-folder pref
+      });
     void loadLibrary().catch((err) => console.error("Failed to load library:", err));
     void loadIntegrations().catch((err) => console.error("Failed to load integrations:", err));
   }, [loadIntegrations, loadPrefs, loadLibrary]);
@@ -49,6 +58,7 @@ export default function App() {
     <div className="h-full w-full flex flex-col">
       <WebBanner />
       <TopBar />
+      <SessionBanner />
       <main className="flex-1 min-h-0 flex">
         <Sidebar />
         <div style={{ width: libraryPx }} className="shrink-0 min-h-0 min-w-0 flex">
@@ -90,6 +100,8 @@ export default function App() {
       </div>
       <MediaSyncIndicator />
       <CollabChat />
+      <ToolDialogs />
+      <RemoteExportPrompts />
     </div>
   );
 }

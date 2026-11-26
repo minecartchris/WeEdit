@@ -18,6 +18,7 @@
 //
 // Zero runtime config beyond PORT. Single dependency: `ws`.
 
+import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
@@ -128,8 +129,35 @@ function sendJson(res, status, body) {
   res.end(body == null ? "" : JSON.stringify(body));
 }
 
+// ── TURN credentials ─────────────────────────────────────────────────────────
+//
+// Peers behind strict NAT (some phone, school and office networks) can't reach
+// each other directly; a TURN server relays for them. coturn's "use-auth-secret"
+// mode checks a time-limited username/password derived from a secret shared
+// with this server, so no long-lived TURN password ships in the app:
+//   username = "<expiry unix time>:weedit"
+//   password = base64(HMAC-SHA1(TURN_SECRET, username))
+// Set TURN_SECRET (same as coturn's static-auth-secret) and TURN_URLS
+// (comma-separated, e.g. "turn:turn.example.com:3478,turns:turn.example.com:5349")
+// in the service environment. Without them /api/turn reports no servers and the
+// app falls back to STUN only.
+const TURN_SECRET = process.env.TURN_SECRET || "";
+const TURN_URLS = (process.env.TURN_URLS || "").split(",").map((s) => s.trim()).filter(Boolean);
+const TURN_TTL_S = 12 * 60 * 60;
+
+function turnCredentials() {
+  if (!TURN_SECRET || TURN_URLS.length === 0) return { iceServers: [] };
+  const username = `${Math.floor(Date.now() / 1000) + TURN_TTL_S}:weedit`;
+  const credential = crypto.createHmac("sha1", TURN_SECRET).update(username).digest("base64");
+  return { iceServers: [{ urls: TURN_URLS, username, credential }], ttl: TURN_TTL_S };
+}
+
 function handleApi(req, res) {
   if (req.method === "OPTIONS") return sendJson(res, 204, null);
+
+  if (req.url === "/api/turn" && req.method === "GET") {
+    return sendJson(res, 200, turnCredentials());
+  }
 
   if (req.url === "/api/stats" && req.method === "GET") {
     return sendJson(res, 200, usageStats());

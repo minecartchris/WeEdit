@@ -29,7 +29,9 @@
       "csp": null,
       "assetProtocol": {
         "enable": true,
-        "scope": ["**"]
+        "scope": [
+          "**"
+        ]
       }
     }
   },
@@ -59,6 +61,13 @@
         "https://github.com/minecartchris/WeEdit/releases/latest/download/latest.json"
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDU0QjgyQzg5RjE4RDhDRUMKUldUc2pJM3hpU3k0VkRSRWRXanpWWmJvZzh0bW9JL093WEhYQmFZR3hEMWNzcXdaektKaXRQaWwK"
+    },
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "weedit"
+        ]
+      }
     }
   }
 }

@@ -28,6 +28,14 @@ export interface ExportOptions {
   cq: number;
   audioBitrateKbps: number;
   outputPath: string;
+  /**
+   * When the output's shape differs from the project's (e.g. a 16:9 stream
+   * exported as a 9:16 Short): "fit" letterboxes with black bars (the default),
+   * "fill" fills the frame and crops the sides (or top/bottom).
+   */
+  reframe?: "fit" | "fill";
+  /** For "fill": which part of the frame to keep, 0 = left/top … 1 = right/bottom. */
+  reframeFocus?: number;
 }
 
 export interface CompiledExport {
@@ -45,6 +53,32 @@ export interface ExportInputs {
 const MIN_ENCODABLE_DUR = 0.05;
 
 export function compileExport(input: ExportInputs, opts: ExportOptions): CompiledExport {
+  const pa = input.project.width / Math.max(1, input.project.height);
+  const oa = opts.width / Math.max(1, opts.height);
+  if (opts.reframe !== "fill" || Math.abs(pa - oa) < 0.01) return compileTimeline(input, opts);
+
+  // Fill: compose on a canvas with the PROJECT's shape that covers the output,
+  // then crop the output out of it at the chosen focus.
+  const even = (n: number) => Math.max(2, Math.round(n / 2) * 2);
+  const work =
+    pa > oa
+      ? { width: even(opts.height * pa), height: opts.height }
+      : { width: opts.width, height: even(opts.width / pa) };
+  const inner = compileTimeline(input, { ...opts, ...work });
+  const focus = Math.min(1, Math.max(0, opts.reframeFocus ?? 0.5));
+  const x = even((work.width - opts.width) * focus);
+  const y = even((work.height - opts.height) * focus);
+
+  const args = [...inner.args];
+  const graphAt = args.indexOf("-filter_complex") + 1;
+  const mapAt = args.indexOf("-map") + 1; // the first -map is the video
+  const videoLabel = args[mapAt];
+  args[graphAt] += `;${videoLabel}crop=${opts.width}:${opts.height}:${x}:${y}[reframed]`;
+  args[mapAt] = "[reframed]";
+  return { ...inner, args };
+}
+
+function compileTimeline(input: ExportInputs, opts: ExportOptions): CompiledExport {
   const { project, tracks, clips, media } = input;
 
   const totalDur = computeTotalDuration(clips);

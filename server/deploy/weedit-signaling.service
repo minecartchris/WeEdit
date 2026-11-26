@@ -14,6 +14,8 @@ Environment=PORT=4444
 # 0.0.0.0 = reachable on the LAN / via a tunnel. Set to 127.0.0.1 if you want
 # only a local nginx reverse proxy to be able to reach it.
 Environment=HOST=0.0.0.0
+# TURN relay (optional). Written by deploy/install-turn.sh; see that script.
+EnvironmentFile=-/etc/weedit/turn.env
 Restart=on-failure
 RestartSec=2
 

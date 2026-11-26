@@ -21,10 +21,33 @@ export const PEER_ICE_SERVERS: RTCIceServer[] = [
   { urls: "stun:global.stun.twilio.com:3478" },
 ];
 
+/** https:// origin of the collab server's small HTTP API (same host as signaling). */
+export const COLLAB_API = SIGNALING[0].replace(/^ws/, "http").replace(/\/$/, "") + "/api";
+
+/**
+ * STUN plus, when the collab server has a TURN relay configured, short-lived
+ * TURN credentials for it. TURN is what lets peers behind strict NAT (phones,
+ * schools, offices) connect at all; it relays only for connections that can't
+ * go direct. Never blocks a session for long: on any failure it's STUN only.
+ */
+export async function iceServers(): Promise<RTCIceServer[]> {
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 3000);
+    const res = await fetch(`${COLLAB_API}/turn`, { signal: ctrl.signal });
+    clearTimeout(timer);
+    if (!res.ok) return PEER_ICE_SERVERS;
+    const body = (await res.json()) as { iceServers?: RTCIceServer[] };
+    return [...PEER_ICE_SERVERS, ...(body.iceServers ?? [])];
+  } catch {
+    return PEER_ICE_SERVERS;
+  }
+}
+
 /** Options passed to y-webrtc's WebrtcProvider (shared by both rooms). */
-export function webrtcProviderOptions() {
+export function webrtcProviderOptions(ice: RTCIceServer[] = PEER_ICE_SERVERS) {
   return {
     signaling: SIGNALING,
-    peerOpts: { config: { iceServers: PEER_ICE_SERVERS } },
+    peerOpts: { config: { iceServers: ice } },
   };
 }

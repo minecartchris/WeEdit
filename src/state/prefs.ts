@@ -32,6 +32,10 @@ const DEFAULTS: UiPrefs = {
   collabMediaTemp: true,
   collabMediaDir: null,
   shareUsageStats: true,
+  useLocalProxies: true,
+  whisperPath: null,
+  captionLanguage: "auto",
+  twitchDownloaderPath: null,
 };
 
 interface PrefsState extends UiPrefs {
@@ -54,6 +58,8 @@ interface PrefsState extends UiPrefs {
   setCollabMediaTemp: (on: boolean) => void;
   setCollabMediaDir: (dir: string | null) => void;
   setShareUsageStats: (on: boolean) => void;
+  /** Set and persist any single preference. */
+  setPref: <K extends keyof UiPrefs>(key: K, value: UiPrefs[K]) => void;
 }
 
 // Apply the theme to <html>: toggles the `dark` class Tailwind keys off and
@@ -109,6 +115,10 @@ export const usePrefs = create<PrefsState>((set, get) => ({
         collabMediaTemp: ui.collabMediaTemp ?? DEFAULTS.collabMediaTemp,
         collabMediaDir: ui.collabMediaDir ?? DEFAULTS.collabMediaDir,
         shareUsageStats: ui.shareUsageStats ?? DEFAULTS.shareUsageStats,
+        useLocalProxies: ui.useLocalProxies ?? DEFAULTS.useLocalProxies,
+        whisperPath: ui.whisperPath ?? DEFAULTS.whisperPath,
+        captionLanguage: ui.captionLanguage ?? DEFAULTS.captionLanguage,
+        twitchDownloaderPath: ui.twitchDownloaderPath ?? DEFAULTS.twitchDownloaderPath,
       };
       set({ ...merged, loaded: true });
       applyTheme(merged.theme);
@@ -176,6 +186,10 @@ export const usePrefs = create<PrefsState>((set, get) => ({
   setShareUsageStats: (shareUsageStats) => {
     set({ shareUsageStats });
     void persist({ shareUsageStats });
+  },
+  setPref: (key, value) => {
+    set({ [key]: value } as Partial<PrefsState>);
+    void persist({ [key]: value } as Partial<UiPrefs>);
   },
 }));
 

@@ -23,6 +23,7 @@ import { importFile, importPath, pickMediaFiles, pickMediaFilesWeb } from "@/lib
 import { replaceMediaFile } from "@/lib/relink";
 import { useIsMediaMissing } from "@/state/missingMedia";
 import { isWeb } from "@/lib/platform";
+import { useProxies } from "@/lib/proxy";
 import { formatDuration, useEditor } from "@/state/editor";
 import type { LibraryFilter, MediaItem } from "@/types";
 
@@ -374,6 +375,7 @@ function MediaCard({ item, onError }: { item: MediaItem; onError: (msg: string |
         ) : (
           <KindIcon kind={item.kind} />
         )}
+        <ProxyBadge id={item.id} ready={!!item.previewSrc} />
         {item.srcIsProxy && (
           <span className="absolute bottom-1 left-1 px-1.5 py-0.5 rounded bg-amber-500/90 text-black text-[10px] font-medium">
             Preview
@@ -488,5 +490,19 @@ function DropzoneArt() {
         <circle cx="100" cy="120" r="2" fill="#94a3b8" />
       </g>
     </svg>
+  );
+}
+
+/** Editing-copy status for a big video: progress while it's made, then a small marker. */
+function ProxyBadge({ id, ready }: { id: string; ready: boolean }) {
+  const pct = useProxies((s) => s.building[id]);
+  if (pct == null && !ready) return null;
+  return (
+    <span
+      className="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-black/60 text-white text-[10px] tabular-nums"
+      title={pct != null ? "Making a smooth-playback copy" : "Previews from a smooth-playback copy; export uses the original"}
+    >
+      {pct != null ? `Optimizing ${Math.round(pct * 100)}%` : "Optimized"}
+    </span>
   );
 }

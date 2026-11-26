@@ -391,6 +391,19 @@ def cmd_release_all(args: argparse.Namespace) -> None:
         fail("Linux artifact upload failed.")
     if publish_linux_updater(release_tag(), version) != 0:
         fail("Couldn't add the Linux builds to latest.json (Linux installs won't auto-update).")
+
+    # 4. macOS builds on GitHub's Mac runners (.github/workflows/release-macos.yml).
+    if not args.no_mac:
+        print("==> starting the macOS build on GitHub Actions")
+        started = subprocess.run(
+            ["gh", "workflow", "run", "release-macos.yml",
+             "-f", f"tag={release_tag()}", "-f", f"version={version}"],
+            cwd=REPO_ROOT,
+        )
+        if started.returncode == 0:
+            print("    follow it with: gh run watch  (or the repo's Actions tab)")
+        else:
+            print("    couldn't start it -- run 'Release macOS' from the Actions tab by hand.")
     print(f"==> Full release {version} done -- Windows + Linux at tag {release_tag()}")
 
 
@@ -431,6 +444,8 @@ def build_parser() -> argparse.ArgumentParser:
     ra.add_argument("--distro", default=None, help="WSL distro for the Linux build (default: Ubuntu, else Debian)")
     ra.add_argument("--no-install", action="store_true",
                     help="don't auto-install missing Linux build deps")
+    ra.add_argument("--no-mac", action="store_true",
+                    help="don't start the macOS build workflow on GitHub Actions")
     ra.set_defaults(func=cmd_release_all)
 
     ul = sub.add_parser(

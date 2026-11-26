@@ -1,5 +1,6 @@
 import { commitVersion } from "@/lib/history";
 import { newProject, openProject, saveProject, snapshotForFile } from "@/lib/project";
+import { shuttleBackward, shuttleForward, shuttleStop } from "@/lib/shuttle";
 import { useEditor } from "@/state/editor";
 import { usePrefs } from "@/state/prefs";
 
@@ -63,6 +64,18 @@ export const SHORTCUT_COMMANDS: ShortcutCommand[] = [
   { id: "speed-up", label: "Preview speed +0.1x", defaultBinding: "]", run: () => useEditor.getState().nudgePreviewRate(0.1) },
   { id: "speed-down", label: "Preview speed -0.1x", defaultBinding: "[", run: () => useEditor.getState().nudgePreviewRate(-0.1) },
   { id: "speed-reset", label: "Preview speed reset to 1x", defaultBinding: "\\", run: () => useEditor.getState().setPreviewRate(1) },
+  { id: "shuttle-back", label: "Shuttle backward (J, repeat for faster)", defaultBinding: "j", run: shuttleBackward },
+  { id: "shuttle-stop", label: "Shuttle stop (K)", defaultBinding: "k", run: shuttleStop },
+  { id: "shuttle-forward", label: "Shuttle forward (L, repeat for faster)", defaultBinding: "l", run: shuttleForward },
+  {
+    id: "add-marker",
+    label: "Add marker at playhead",
+    defaultBinding: "m",
+    run: () => {
+      const ed = useEditor.getState();
+      ed.addMarker(ed.playheadSec);
+    },
+  },
   {
     id: "toggle-snap",
     label: "Toggle snapping",

@@ -57,6 +57,11 @@ export interface MediaItem {
   /** Source file extension without the dot (e.g. "mp4") — names the cache file. */
   ext?: string;
   /**
+   * Local-only: a small editing copy of a big video, used by the preview for
+   * smooth playback/scrubbing (export always reads `src`). Never synced.
+   */
+  previewSrc?: string;
+  /**
    * Collaboration only, per-peer local: `src` currently points at a small
    * editing copy (proxy) while the original is still downloading. Never synced.
    * Export refuses to run while any clip uses a proxy.
@@ -277,9 +282,28 @@ export interface UiPrefs {
   collabMediaDir: string | null;
   /** Send the anonymous "this install was used" ping behind the website's user counter. */
   shareUsageStats: boolean;
+  /** Play big local videos from a small editing copy (proxy) in the preview. */
+  useLocalProxies: boolean;
+  /** whisper.cpp CLI for auto-captions; null = look on PATH. */
+  whisperPath: string | null;
+  /** Caption language code ("auto", "en", "de"…). */
+  captionLanguage: string;
+  /** TwitchDownloaderCLI for chat replay / chat highlights; null = look on PATH. */
+  twitchDownloaderPath: string | null;
+}
+
+/** A named point on the timeline (chapter starts, notes, highlights). */
+export interface Marker {
+  id: string;
+  sec: number;
+  label: string;
+  /** Hex colour; markers added from Twitch chat spikes use a distinct one. */
+  color?: string;
 }
 
 export interface ProjectMeta {
+  /** Timeline markers, sorted by time. Doubles as YouTube chapters. */
+  markers?: Marker[];
   name: string;
   aspectRatio: AspectRatio;
   /** Project frame rate. Used for snapping & export. */

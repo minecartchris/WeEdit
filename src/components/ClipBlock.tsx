@@ -1,5 +1,8 @@
-import { ArrowLeftToLine, ArrowRightToLine, AudioLines, FolderSearch, Music, Pencil, Scissors, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { ArrowLeftToLine, ArrowRightToLine, AudioLines, Captions, FolderSearch, MessageSquareText, Music, Pencil, Scissors, Trash2, VolumeX } from "lucide-react";
+import { useTools } from "@/lib/aiTools";
+import { useTwitchChatDialog } from "@/lib/twitchChat";
+import { isTauri } from "@/lib/platform";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ContextMenu, ContextMenuItem } from "@/components/ui/ContextMenu";
 import {
   MIN_CLIP_DURATION,
@@ -11,6 +14,7 @@ import {
   snapToAnchors,
   trackAcceptsClipKind,
 } from "@/lib/clips";
+import { useCollab } from "@/state/collab";
 import { useEditor } from "@/state/editor";
 import { usePrefs } from "@/state/prefs";
 import { useWaveform } from "@/lib/waveform";
@@ -28,6 +32,13 @@ interface ClipBlockProps {
 // right-click for the per-clip context menu (delete / split / properties).
 export function ClipBlock({ clip, pxPerSec }: ClipBlockProps) {
   const isSelected = useEditor((s) => s.selectedClipIds.includes(clip.id));
+  // Collaborators who have this clip selected — shown so two people don't
+  // unknowingly edit the same clip at once.
+  const peersRecord = useCollab((s) => s.peers);
+  const editingPeers = useMemo(
+    () => Object.values(peersRecord).filter((p) => p.selectedClipIds.includes(clip.id)),
+    [peersRecord, clip.id],
+  );
   const selectClip = useEditor((s) => s.selectClip);
   const updateClip = useEditor((s) => s.updateClip);
   const pushHistory = useEditor((s) => s.pushHistory);
@@ -208,8 +219,51 @@ export function ClipBlock({ clip, pxPerSec }: ClipBlockProps) {
       useEditor.getState().clips,
     );
 
+    // Ripple trim (hold Alt as you grab the edge): the clip's position stays
+    // put, and every later clip on this track moves with the edit — no gap is
+    // left behind and nothing gets covered.
+    const ripple = e.altKey;
+    const initialEnd = initial.startSec + initial.durationSec;
+    const followers = ripple
+      ? Object.values(useEditor.getState().clips)
+          .filter((c) => c.trackId === clip.trackId && c.id !== clip.id && c.startSec >= initialEnd - 1e-6)
+          .map((c) => ({ id: c.id, startSec: c.startSec }))
+      : [];
+    const moveFollowers = (delta: number) => {
+      if (followers.length === 0) return;
+      useEditor.setState((s) => {
+        const clips = { ...s.clips };
+        for (const f of followers) {
+          const c = clips[f.id];
+          if (c) clips[f.id] = { ...c, startSec: Math.max(0, f.startSec + delta) } as Clip;
+        }
+        return { clips };
+      });
+    };
+
     const onMove = (ev: PointerEvent) => {
       const dSec = (ev.clientX - startX) / pxPerSec;
+      if (ripple && edge === "left") {
+        // Trim the head off: the clip starts later in its source but keeps its
+        // place; everything after slides left by the amount trimmed.
+        const minDragged = -initial.sourceInSec / speed;
+        const maxDragged = initial.durationSec - MIN_CLIP_DURATION;
+        const dragged = Math.max(minDragged, Math.min(maxDragged, dSec));
+        updateClip(clip.id, {
+          startSec: initial.startSec,
+          sourceInSec: initial.sourceInSec + dragged * speed,
+          durationSec: initial.durationSec - dragged,
+        });
+        moveFollowers(-dragged);
+        return;
+      }
+      if (ripple && edge === "right") {
+        const sourceMaxDur = Math.max(MIN_CLIP_DURATION, (sourceDur - initial.sourceInSec) / speed);
+        const nextDur = Math.max(MIN_CLIP_DURATION, Math.min(sourceMaxDur, initial.durationSec + dSec));
+        updateClip(clip.id, { durationSec: nextDur });
+        moveFollowers(nextDur - initial.durationSec);
+        return;
+      }
       if (edge === "left") {
         // Left edge: clamp by source start (sourceInSec >= 0), MIN_DUR, t>=0,
         // AND no-overlap window's lower bound. Source moves by dragged*speed, so
@@ -323,6 +377,20 @@ export function ClipBlock({ clip, pxPerSec }: ClipBlockProps) {
           : renderClipTitle(clip, sourceMedia)
       }
     >
+      {editingPeers.length > 0 && (
+        <div
+          className="absolute inset-0 rounded-md pointer-events-none z-20"
+          style={{ boxShadow: `inset 0 0 0 2px ${editingPeers[0].color}` }}
+          title={`Selected by ${editingPeers.map((p) => p.name).join(", ")}`}
+        >
+          <span
+            className="absolute top-0 right-0 px-1 text-[9px] leading-3 text-white rounded-bl"
+            style={{ backgroundColor: editingPeers[0].color }}
+          >
+            {editingPeers.map((p) => p.name).join(", ")}
+          </span>
+        </div>
+      )}
       <div
         onPointerDown={onTrimPointerDown("left")}
         className="w-1.5 shrink-0 bg-we-teal/60 hover:bg-we-teal cursor-ew-resize"
@@ -385,6 +453,27 @@ export function ClipBlock({ clip, pxPerSec }: ClipBlockProps) {
               Detach audio
             </ContextMenuItem>
           )}
+          {isTauri() && (clip.kind === "video" || clip.kind === "audio") && (
+            <>
+              <ContextMenuItem
+                icon={VolumeX}
+                onSelect={() => useTools.getState().openSilence(toolTargets(clip.id))}
+              >
+                Remove silence…
+              </ContextMenuItem>
+              <ContextMenuItem
+                icon={Captions}
+                onSelect={() => useTools.getState().openCaptions(toolTargets(clip.id))}
+              >
+                Generate captions…
+              </ContextMenuItem>
+              {clip.kind === "video" && (
+                <ContextMenuItem icon={MessageSquareText} onSelect={() => useTwitchChatDialog.getState().open(clip.id)}>
+                  Twitch chat replay & highlights…
+                </ContextMenuItem>
+              )}
+            </>
+          )}
           <ContextMenuItem icon={Trash2} danger onSelect={() => removeClip(clip.id)} shortcut="Del">
             Delete clip
           </ContextMenuItem>
@@ -392,6 +481,12 @@ export function ClipBlock({ clip, pxPerSec }: ClipBlockProps) {
       )}
     </div>
   );
+}
+
+/** The selection if this clip is part of it, else just this clip. */
+function toolTargets(clipId: string): string[] {
+  const sel = useEditor.getState().selectedClipIds;
+  return sel.includes(clipId) ? sel : [clipId];
 }
 
 // "Push left / right" (#48): slide the clip — or the whole selection it's part

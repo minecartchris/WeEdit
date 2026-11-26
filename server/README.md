@@ -154,6 +154,36 @@ npx wscat -c wss://weedit.minecartchris.cc:8443
 - **Resource use:** negligible. It holds a WebSocket per online collaborator and
   forwards a handful of tiny handshake messages per session.
 
+## Deploying from Windows in one command
+
+`scripts/deploy-server.ps1` (repo root) builds the browser editor, copies
+`server/`, `website/` and `dist-web/` to the VM and runs the installers there
+under sudo — it asks for your SSH login and the sudo password:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/deploy-server.ps1 -SshHost me@192.168.1.242
+# also install the TURN relay:
+powershell -ExecutionPolicy Bypass -File scripts/deploy-server.ps1 -SshHost me@192.168.1.242 -WithTurn -TurnHost turn.example.com
+```
+
+## HTTP API (same port)
+
+- `POST /api/ping` — the app's anonymous once-a-day usage ping (random install
+  id, version, OS). Rate-limited per IP; users can switch it off in Settings.
+- `GET /api/stats` — aggregate counts for the website (`users`, `active30d`,
+  `activeToday`, `webVisitors`, `byOs`). IDs are never returned.
+- `GET /api/turn` — short-lived TURN credentials when a relay is configured.
+
+The counter is stored in `/var/lib/weedit-signaling/usage.json` (systemd
+`StateDirectory`).
+
+**TURN relay, automated:** `sudo TURN_HOST=turn.example.com bash deploy/install-turn.sh`
+installs coturn in shared-secret mode and writes the secret to
+`/etc/weedit/turn.env`, which the signaling service reads — the app then gets
+expiring TURN credentials from `/api/turn`, so no TURN password ships in the
+app. TURN can't go through Cloudflare's proxy: point a DNS-only record at your
+public IP and forward 3478/udp+tcp and 49160-49200/udp to the VM.
+
 ## If some peers still can't connect
 
 Signaling only introduces peers; the WebRTC connection itself still has to punch

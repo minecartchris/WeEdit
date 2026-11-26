@@ -63,6 +63,7 @@ function stripMediaLocal(m: MediaItem): MediaItem {
     ...m,
     src: "",
     srcIsProxy: undefined,
+    previewSrc: undefined,
     thumbnail: m.thumbnail,
     audioTracks: m.audioTracks?.map((t) => ({ ...t, filepath: "" })),
   };
@@ -118,6 +119,7 @@ function rebuildStoreFromDoc(maps: CollabMaps): boolean {
         ...remote,
         src: local.src,
         srcIsProxy: local.srcIsProxy,
+        previewSrc: local.previewSrc,
         thumbnail: local.thumbnail ?? remote.thumbnail,
         audioTracks: mergeAudioTracks(remote.audioTracks, local.audioTracks),
       };
@@ -164,7 +166,9 @@ function rebuildStoreFromDoc(maps: CollabMaps): boolean {
 export function bindEditorToDoc(
   maps: CollabMaps,
   seedFromStore: boolean,
+  opts: { canEdit?: () => boolean } = {},
 ): { unbind: () => void; enableLocal: () => void } {
+  const canEdit = opts.canEdit ?? (() => true);
   let localEnabled = seedFromStore;
 
   if (seedFromStore) pushAllToDoc(maps);
@@ -177,7 +181,15 @@ export function bindEditorToDoc(
       s.clips !== prev.clips ||
       s.media !== prev.media ||
       s.project !== prev.project;
-    if (changed) pushChangesToDoc(maps);
+    if (!changed) return;
+    if (!canEdit()) {
+      // View-only: the host hasn't given us edit rights. Put the shared state
+      // back instead of publishing our change (local-only fields like each
+      // media item's src survive the rebuild).
+      rebuildStoreFromDoc(maps);
+      return;
+    }
+    pushChangesToDoc(maps);
   });
 
   // doc → store: rebuild on any remote change (skip our own LOCAL_ORIGIN writes).

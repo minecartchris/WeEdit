@@ -19,7 +19,8 @@
     "release": "powershell -ExecutionPolicy Bypass -File scripts/release.ps1"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2",
+    "@tauri-apps/api": "~2.11.1",
+    "@tauri-apps/plugin-deep-link": "~2.4.10",
     "@tauri-apps/plugin-dialog": "^2",
     "@tauri-apps/plugin-fs": "^2",
     "@tauri-apps/plugin-process": "^2.3.1",
